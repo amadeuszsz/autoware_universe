@@ -96,6 +96,7 @@ private:
     INVALID = 0,
     MPC = 1,
     PURE_PURSUIT = 2,
+    LQR = 3,
   };
   enum class LongitudinalControllerMode {
     INVALID = 0,
