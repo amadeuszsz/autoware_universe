@@ -14,6 +14,7 @@
 
 #include "trajectory_follower_node/controller_node.hpp"
 
+#include "ml_controller/ml_controller_lateral_controller.hpp"
 #include "mpc_lateral_controller/mpc_lateral_controller.hpp"
 #include "pid_longitudinal_controller/pid_longitudinal_controller.hpp"
 #include "pure_pursuit/pure_pursuit_lateral_controller.hpp"
@@ -44,6 +45,10 @@ Controller::Controller(const rclcpp::NodeOptions & node_options) : Node("control
     }
     case LateralControllerMode::PURE_PURSUIT: {
       lateral_controller_ = std::make_shared<pure_pursuit::PurePursuitLateralController>(*this);
+      break;
+    }
+    case LateralControllerMode::ML: {
+      lateral_controller_ = std::make_shared<ml_controller::MLControllerLateralController>(*this);
       break;
     }
     default:
@@ -98,6 +103,7 @@ Controller::LateralControllerMode Controller::getLateralControllerMode(
 {
   if (controller_mode == "mpc") return LateralControllerMode::MPC;
   if (controller_mode == "pure_pursuit") return LateralControllerMode::PURE_PURSUIT;
+  if (controller_mode == "ml") return LateralControllerMode::ML;
 
   return LateralControllerMode::INVALID;
 }
