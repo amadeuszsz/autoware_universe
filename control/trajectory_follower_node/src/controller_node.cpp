@@ -48,7 +48,7 @@ Controller::Controller(const rclcpp::NodeOptions & node_options) : Node("control
       break;
     }
     case LateralControllerMode::ML: {
-      lateral_controller_ = std::make_shared<ml_controller::MLControllerLateralController>(*this);
+      lateral_controller_ = std::make_shared<ml_controller::MlLateralController>(*this);
       break;
     }
     default:
