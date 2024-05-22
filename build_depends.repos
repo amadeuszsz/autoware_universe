@@ -37,3 +37,7 @@ repositories:
     type: git
     url: https://github.com/MORAI-Autonomous/MORAI-ROS2_morai_msgs.git
     version: main
+  universe/control/ml_controller:
+    type: git
+    url: https://github.com/Gandhi444/ml_controller.git
+    version: main
