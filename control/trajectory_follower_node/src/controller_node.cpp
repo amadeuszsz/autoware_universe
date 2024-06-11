@@ -18,6 +18,7 @@
 #include "pid_longitudinal_controller/pid_longitudinal_controller.hpp"
 #include "pure_pursuit/pure_pursuit_lateral_controller.hpp"
 #include "tier4_autoware_utils/ros/marker_helper.hpp"
+#include "cem_controller/cem_controller.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -46,6 +47,14 @@ Controller::Controller(const rclcpp::NodeOptions & node_options) : Node("control
       lateral_controller_ = std::make_shared<pure_pursuit::PurePursuitLateralController>(*this);
       break;
     }
+    case LateralControllerMode::CEM: {
+      lateral_controller_ = std::make_shared<cem_controller::CemLateralController>(*this);
+      break;
+    }
+    // case LateralControllerMode::CEM: {
+    //   lateral_controller_ = std::make_shared<cem::CemLateralController>(*this);
+    //   break;
+    // }
     default:
       throw std::domain_error("[LateralController] invalid algorithm");
   }
@@ -98,7 +107,7 @@ Controller::LateralControllerMode Controller::getLateralControllerMode(
 {
   if (controller_mode == "mpc") return LateralControllerMode::MPC;
   if (controller_mode == "pure_pursuit") return LateralControllerMode::PURE_PURSUIT;
-
+  if (controller_mode == "cem") return LateralControllerMode::CEM;
   return LateralControllerMode::INVALID;
 }
 
