@@ -2,12 +2,16 @@ cmake_minimum_required(VERSION 3.14)
 project(lqr_lateral_controller)
 
 find_package(autoware_cmake REQUIRED)
+
+
 autoware_package()
 
 ament_auto_add_library(${PROJECT_NAME} SHARED
   include/lqr_lateral_controller/lqr_lateral_controller.hpp
   include/lqr_lateral_controller/visibility_control.hpp
   src/lqr_lateral_controller.cpp
+  include/lqr_lateral_controller/lqr.hpp
+  src/lqr.cpp
 )
 
 ament_auto_add_library(${PROJECT_NAME}_node SHARED

@@ -19,6 +19,9 @@
 #include <rclcpp/rclcpp.hpp>
 
 #include "lqr_lateral_controller/lqr_lateral_controller.hpp"
+#include "lqr_lateral_controller/lqr.hpp"
+#include <Eigen/Dense>
+#include <math.h>
 
 namespace lqr_lateral_controller
 {
@@ -30,8 +33,9 @@ public:
   explicit LqrLateralControllerNode(const rclcpp::NodeOptions & options);
 
 private:
-  LqrLateralControllerPtr lqr_lateral_controller_{nullptr};
-  int64_t param_name_{123};
+  //
+  //  NOT USED - launch from autoware
+  //
 };
 }  // namespace lqr_lateral_controller
 
