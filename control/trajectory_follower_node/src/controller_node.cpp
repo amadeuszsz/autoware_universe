@@ -47,8 +47,9 @@ Controller::Controller(const rclcpp::NodeOptions & node_options) : Node("control
       lateral_controller_ = std::make_shared<pure_pursuit::PurePursuitLateralController>(*this);
       break;
     }
-    case LateralControllerMode::ML: {
+    case LateralControllerMode::ML_CONTROLLER: {
       lateral_controller_ = std::make_shared<ml_controller::MlLateralController>(*this);
+      
       break;
     }
     default:
@@ -103,7 +104,7 @@ Controller::LateralControllerMode Controller::getLateralControllerMode(
 {
   if (controller_mode == "mpc") return LateralControllerMode::MPC;
   if (controller_mode == "pure_pursuit") return LateralControllerMode::PURE_PURSUIT;
-  if (controller_mode == "ml") return LateralControllerMode::ML;
+  if (controller_mode == "ml_controller") return LateralControllerMode::ML_CONTROLLER;
 
   return LateralControllerMode::INVALID;
 }
@@ -236,7 +237,6 @@ void Controller::callbackTimerControl()
   out.lateral = lat_out.control_cmd;
   out.longitudinal = lon_out.control_cmd;
   control_cmd_pub_->publish(out);
-
   // 6. publish debug marker
   publishDebugMarker(*input_data, lat_out);
 }
