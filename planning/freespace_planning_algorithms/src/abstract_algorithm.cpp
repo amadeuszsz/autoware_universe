@@ -24,6 +24,7 @@ namespace freespace_planning_algorithms
 using tier4_autoware_utils::createQuaternionFromYaw;
 using tier4_autoware_utils::normalizeRadian;
 
+// Dokonuje transformacji pozy z jednego układu współrzędnych do drugiego.
 geometry_msgs::msg::Pose transformPose(
   const geometry_msgs::msg::Pose & pose, const geometry_msgs::msg::TransformStamped & transform)
 {
@@ -33,12 +34,15 @@ geometry_msgs::msg::Pose transformPose(
   return transformed_pose;
 }
 
+// Dzieli kąt 2pi na 'theta_size' dyskretnych części i zwraca indeks tej, do której należy kąt 'theta'.
+// 'normalizeRadian' normalizuje kąt do zakresu (-pi, pi).
 int discretizeAngle(const double theta, const int theta_size)
 {
   const double one_angle_range = 2.0 * M_PI / theta_size;
   return static_cast<int>(std::rint(normalizeRadian(theta, 0.0) / one_angle_range)) % theta_size;
 }
 
+// Konwertuje pozę w lokalnym układzie współrzędnych na indeksy x, y mapy oraz indeks kąta.
 IndexXYT pose2index(
   const nav_msgs::msg::OccupancyGrid & costmap, const geometry_msgs::msg::Pose & pose_local,
   const int theta_size)
@@ -49,6 +53,7 @@ IndexXYT pose2index(
   return {index_x, index_y, index_theta};
 }
 
+// Konwertuje indexy x, y mapy oraz indeks kąta na pozę w lokalnym układzie współrzędnych.
 geometry_msgs::msg::Pose index2pose(
   const nav_msgs::msg::OccupancyGrid & costmap, const IndexXYT & index, const int theta_size)
 {
@@ -64,6 +69,7 @@ geometry_msgs::msg::Pose index2pose(
   return pose_local;
 }
 
+// Transformuję pozę w układzie globalnym do układu lokalnego mapy.
 geometry_msgs::msg::Pose global2local(
   const nav_msgs::msg::OccupancyGrid & costmap, const geometry_msgs::msg::Pose & pose_global)
 {
@@ -76,6 +82,7 @@ geometry_msgs::msg::Pose global2local(
   return transformPose(pose_global, transform);
 }
 
+// Transformuję pozę w układzie localnym mapy do układu globalnego.
 geometry_msgs::msg::Pose local2global(
   const nav_msgs::msg::OccupancyGrid & costmap, const geometry_msgs::msg::Pose & pose_local)
 {
@@ -88,6 +95,7 @@ geometry_msgs::msg::Pose local2global(
   return transformPose(pose_local, transform);
 }
 
+// Wyznacza całkowitą długość ścieżki dodając do siebie odległości pomiędzy kolejnymi punktami z 'waypoints'.
 double PlannerWaypoints::compute_length() const
 {
   if (waypoints.empty()) {
@@ -102,6 +110,9 @@ double PlannerWaypoints::compute_length() const
   return total_cost;
 }
 
+// Na podstawie 'OccupancyGrid' tworzy tablicę, która przechowuje informacje o tym, czy dana komórka w mapie jest zajęta.
+// Dla wszystkich możliwych indeksów kąta oblicza komórki mapy z którymi koliduje pojazd oraz jego narożniki i zapisuje je 
+// odpowiednio do 'coll_indexes_table_' oraz 'vertex_indexes_table_'.
 void AbstractPlanningAlgorithm::setMap(const nav_msgs::msg::OccupancyGrid & costmap)
 {
   costmap_ = costmap;
@@ -135,6 +146,9 @@ void AbstractPlanningAlgorithm::setMap(const nav_msgs::msg::OccupancyGrid & cost
   }
 }
 
+// Dla danego indeksu kąta oblicza z jakimi komórkami w mapie koliduje pojazd i dodaje ich indeksy do wektora 'indexes_2d'. 
+// Usuwa powtarzające się indeksy z wektora 'indexes_2d'. Do wektora 'vertex_indexes_2d' dodaje indeksy komórek zawierających
+// narożniki pojazdu.
 void AbstractPlanningAlgorithm::computeCollisionIndexes(
   int theta_index, std::vector<IndexXY> & indexes_2d,
   std::vector<IndexXY> & vertex_indexes_2d) const
@@ -201,6 +215,8 @@ void AbstractPlanningAlgorithm::computeCollisionIndexes(
   addIndex2d(back, left, vertex_indexes_2d);
 }
 
+// Dla danej pozycji i orientacji pojazdu sprawdza, czy któryś z narożników znajduje się poza mapą oraz czy komórki zajmowane
+// przez pojazd pokrywają się z przeszkodami.
 bool AbstractPlanningAlgorithm::detectCollision(const IndexXYT & base_index) const
 {
   if (coll_indexes_table_.empty()) {
@@ -235,13 +251,13 @@ bool AbstractPlanningAlgorithm::detectCollision(const IndexXYT & base_index) con
   return false;
 }
 
+// Przelicza pozy z trajektorii na indeksy i dla każdego z nich sprawdza czy występuje kolizja pojazdu z przeszkodami.
 bool AbstractPlanningAlgorithm::hasObstacleOnTrajectory(
   const geometry_msgs::msg::PoseArray & trajectory) const
 {
   for (const auto & pose : trajectory.poses) {
     const auto pose_local = global2local(costmap_, pose);
     const auto index = pose2index(costmap_, pose_local, planner_common_param_.theta_size);
-
     if (detectCollision(index)) {
       return true;
     }
