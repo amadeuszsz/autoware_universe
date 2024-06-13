@@ -237,7 +237,7 @@ void Controller::callbackTimerControl()
   out.lateral = lat_out.control_cmd;
   out.longitudinal = lon_out.control_cmd;
   control_cmd_pub_->publish(out);
-  
+
   // 6. publish debug marker
   publishDebugMarker(*input_data, lat_out);
 }
