@@ -29,20 +29,20 @@ using tier4_autoware_utils::calcYawDeviation;
 SimpleTrajectoryFollower::SimpleTrajectoryFollower(const rclcpp::NodeOptions & options)
 : Node("simple_trajectory_follower", options)
 {
-  pub_cmd_ = create_publisher<AckermannControlCommand>("output/control_cmd", 1); //do sterowania prędkością boczną i wzdłużną  
+  pub_cmd_ = create_publisher<AckermannControlCommand>("output/control_cmd", 1); 
 
   sub_kinematics_ = create_subscription<Odometry>(
-    "input/kinematics", 1, [this](const Odometry::SharedPtr msg) { odometry_ = msg; });//subskrybuje temat, odebraną wiadomość przypisuje do zmiennej odometry_
+    "input/kinematics", 1, [this](const Odometry::SharedPtr msg) { odometry_ = msg; });
   sub_trajectory_ = create_subscription<Trajectory>(
     "input/trajectory", 1, [this](const Trajectory::SharedPtr msg) { trajectory_ = msg; });
 
-  use_external_target_vel_ = declare_parameter<bool>("use_external_target_vel"); // tworzy zmienną use_external_target_vel było zdefiniowane w pliku hpp
+  use_external_target_vel_ = declare_parameter<bool>("use_external_target_vel");
   external_target_vel_ = declare_parameter<float>("external_target_vel");
   lateral_deviation_ = declare_parameter<float>("lateral_deviation");
 
   using namespace std::literals::chrono_literals;
   timer_ = rclcpp::create_timer(
-    this, get_clock(), 30ms, std::bind(&SimpleTrajectoryFollower::onTimer, this));// wyołanie funkcji SimpleTrajectoryFollower::onTimer co jakiś czas 
+    this, get_clock(), 30ms, std::bind(&SimpleTrajectoryFollower::onTimer, this));
 }
 
 void SimpleTrajectoryFollower::onTimer()
