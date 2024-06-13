@@ -43,7 +43,7 @@ struct AstarParam
   bool use_back;               // backward search
 
   // search configs
-  double distance_heuristic_weight;  // obstacle threshold on grid [0,255]
+  double distance_heuristic_weight;  
 };
 
 struct AstarNode
@@ -130,11 +130,11 @@ public:
     const geometry_msgs::msg::Pose & goal_pose) override;
 
   const PlannerWaypoints & getWaypoints() const { return waypoints_; }
-
   inline int getKey(const IndexXYT & index)
   {
     return (index.theta + (index.y * x_scale_ + index.x) * y_scale_);
   }
+
 
 private:
   bool search();

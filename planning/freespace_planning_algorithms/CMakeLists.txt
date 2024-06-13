@@ -20,6 +20,7 @@ ament_auto_add_library(freespace_planning_algorithms SHARED
   src/abstract_algorithm.cpp
   src/astar_search.cpp
   src/rrtstar.cpp
+  src/dstar.cpp
 )
 
 target_link_libraries(freespace_planning_algorithms

@@ -20,6 +20,8 @@
 
 #include <geometry_msgs/msg/pose_array.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
+#include <visualization_msgs/msg/marker.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
 
 #include <tf2/utils.h>
 
@@ -129,7 +131,7 @@ public:
   : planner_common_param_(planner_common_param), collision_vehicle_shape_(vehicle_info, margin)
   {
   }
-
+  void clearNodesDstar();
   virtual void setMap(const nav_msgs::msg::OccupancyGrid & costmap);
   virtual bool makePlan(
     const geometry_msgs::msg::Pose & start_pose, const geometry_msgs::msg::Pose & goal_pose) = 0;
@@ -185,6 +187,8 @@ protected:
 
   // result path
   PlannerWaypoints waypoints_;
+
+
 };
 
 }  // namespace freespace_planning_algorithms
