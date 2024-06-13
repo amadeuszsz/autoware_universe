@@ -51,10 +51,6 @@ Controller::Controller(const rclcpp::NodeOptions & node_options) : Node("control
       lateral_controller_ = std::make_shared<cem_controller::CemLateralController>(*this);
       break;
     }
-    // case LateralControllerMode::CEM: {
-    //   lateral_controller_ = std::make_shared<cem::CemLateralController>(*this);
-    //   break;
-    // }
     default:
       throw std::domain_error("[LateralController] invalid algorithm");
   }
