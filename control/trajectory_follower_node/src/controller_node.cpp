@@ -18,6 +18,7 @@
 #include "pid_longitudinal_controller/pid_longitudinal_controller.hpp"
 #include "pure_pursuit/pure_pursuit_lateral_controller.hpp"
 #include "tier4_autoware_utils/ros/marker_helper.hpp"
+#include "cem_controller/cem_controller.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -44,6 +45,10 @@ Controller::Controller(const rclcpp::NodeOptions & node_options) : Node("control
     }
     case LateralControllerMode::PURE_PURSUIT: {
       lateral_controller_ = std::make_shared<pure_pursuit::PurePursuitLateralController>(*this);
+      break;
+    }
+    case LateralControllerMode::CEM: {
+      lateral_controller_ = std::make_shared<cem_controller::CemLateralController>(*this);
       break;
     }
     default:
@@ -82,7 +87,6 @@ Controller::Controller(const rclcpp::NodeOptions & node_options) : Node("control
   debug_marker_pub_ =
     create_publisher<visualization_msgs::msg::MarkerArray>("~/output/debug_marker", rclcpp::QoS{1});
 
-  // Timer
   {
     const auto period_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
       std::chrono::duration<double>(ctrl_period));
@@ -98,7 +102,7 @@ Controller::LateralControllerMode Controller::getLateralControllerMode(
 {
   if (controller_mode == "mpc") return LateralControllerMode::MPC;
   if (controller_mode == "pure_pursuit") return LateralControllerMode::PURE_PURSUIT;
-
+  if (controller_mode == "cem") return LateralControllerMode::CEM;
   return LateralControllerMode::INVALID;
 }
 
@@ -190,7 +194,6 @@ boost::optional<trajectory_follower::InputData> Controller::createInputData(
 
 void Controller::callbackTimerControl()
 {
-  // 1. create input data
   const auto input_data = createInputData(*get_clock());
   if (!input_data) {
     RCLCPP_INFO_THROTTLE(
@@ -198,7 +201,6 @@ void Controller::callbackTimerControl()
     return;
   }
 
-  // 2. check if controllers are ready
   const bool is_lat_ready = lateral_controller_->isReady(*input_data);
   const bool is_lon_ready = longitudinal_controller_->isReady(*input_data);
   if (!is_lat_ready || !is_lon_ready) {
@@ -208,7 +210,6 @@ void Controller::callbackTimerControl()
     return;
   }
 
-  // 3. run controllers
   stop_watch_.tic("lateral");
   const auto lat_out = lateral_controller_->run(*input_data);
   publishProcessingTime(stop_watch_.toc("lateral"), pub_processing_time_lat_ms_);
@@ -217,21 +218,17 @@ void Controller::callbackTimerControl()
   const auto lon_out = longitudinal_controller_->run(*input_data);
   publishProcessingTime(stop_watch_.toc("longitudinal"), pub_processing_time_lon_ms_);
 
-  // 4. sync with each other controllers
   longitudinal_controller_->sync(lat_out.sync_data);
   lateral_controller_->sync(lon_out.sync_data);
 
-  // TODO(Horibe): Think specification. This comes from the old implementation.
   if (isTimeOut(lon_out, lat_out)) return;
 
-  // 5. publish control command
   autoware_auto_control_msgs::msg::AckermannControlCommand out;
   out.stamp = this->now();
   out.lateral = lat_out.control_cmd;
   out.longitudinal = lon_out.control_cmd;
   control_cmd_pub_->publish(out);
 
-  // 6. publish debug marker
   publishDebugMarker(*input_data, lat_out);
 }
 
@@ -241,7 +238,6 @@ void Controller::publishDebugMarker(
 {
   visualization_msgs::msg::MarkerArray debug_marker_array{};
 
-  // steer converged marker
   {
     auto marker = tier4_autoware_utils::createDefaultMarker(
       "map", this->now(), "steer_converged", 0, visualization_msgs::msg::Marker::TEXT_VIEW_FACING,

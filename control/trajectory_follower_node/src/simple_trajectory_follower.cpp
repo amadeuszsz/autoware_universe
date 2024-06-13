@@ -29,7 +29,7 @@ using tier4_autoware_utils::calcYawDeviation;
 SimpleTrajectoryFollower::SimpleTrajectoryFollower(const rclcpp::NodeOptions & options)
 : Node("simple_trajectory_follower", options)
 {
-  pub_cmd_ = create_publisher<AckermannControlCommand>("output/control_cmd", 1);
+  pub_cmd_ = create_publisher<AckermannControlCommand>("output/control_cmd", 1); 
 
   sub_kinematics_ = create_subscription<Odometry>(
     "input/kinematics", 1, [this](const Odometry::SharedPtr msg) { odometry_ = msg; });
@@ -54,11 +54,11 @@ void SimpleTrajectoryFollower::onTimer()
 
   updateClosest();
 
-  AckermannControlCommand cmd;
+  AckermannControlCommand cmd; 
   cmd.stamp = cmd.lateral.stamp = cmd.longitudinal.stamp = get_clock()->now();
   cmd.lateral.steering_tire_angle = static_cast<float>(calcSteerCmd());
   cmd.longitudinal.speed = use_external_target_vel_ ? static_cast<float>(external_target_vel_)
-                                                    : closest_traj_point_.longitudinal_velocity_mps;
+                                                    : closest_traj_point_.longitudinal_velocity_mps; 
   cmd.longitudinal.acceleration = static_cast<float>(calcAccCmd());
   pub_cmd_->publish(cmd);
 }
@@ -97,16 +97,15 @@ double SimpleTrajectoryFollower::calcAccCmd()
 {
   const auto traj_vel = static_cast<double>(closest_traj_point_.longitudinal_velocity_mps);
   const auto ego_vel = odometry_->twist.twist.linear.x;
-  const auto target_vel = use_external_target_vel_ ? external_target_vel_ : traj_vel;
+  const auto target_vel = use_external_target_vel_ ? external_target_vel_ : traj_vel; 
   const auto vel_err = ego_vel - target_vel;
 
-  // P feedback
   constexpr auto kp = 0.5;
   constexpr auto acc_lim = 2.0;
 
   const auto acc = std::clamp(-kp * vel_err, -acc_lim, acc_lim);
   RCLCPP_DEBUG(get_logger(), "vel_err = %f, acc = %f", vel_err, acc);
-  return acc;
+  return acc; 
 }
 
 bool SimpleTrajectoryFollower::checkData()
