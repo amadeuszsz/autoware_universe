@@ -137,7 +137,6 @@ public:
     const geometry_msgs::msg::Pose & start_pose, const geometry_msgs::msg::Pose & goal_pose) = 0;
   virtual bool hasObstacleOnTrajectory(const geometry_msgs::msg::PoseArray & trajectory) const;
   const PlannerWaypoints & getWaypoints() const { return waypoints_; }
-  const visualization_msgs::msg::MarkerArray & getMarkerArray() const { return marker_array_; }
 
   virtual ~AbstractPlanningAlgorithm() {}
 
@@ -189,8 +188,7 @@ protected:
   // result path
   PlannerWaypoints waypoints_;
 
-  visualization_msgs::msg::MarkerArray marker_array_;
-  size_t marker_id_ = 0;
+
 };
 
 }  // namespace freespace_planning_algorithms
