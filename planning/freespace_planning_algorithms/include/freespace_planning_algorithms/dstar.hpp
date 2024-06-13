@@ -158,7 +158,6 @@ public:
     const geometry_msgs::msg::Pose & goal_pose) override;
 
   void clearNodesDstar();
-  const visualization_msgs::msg::MarkerArray & getMarkerArray() const { return marker_array_; }
 
   inline int getKey(const IndexXYT & index) const
   {
