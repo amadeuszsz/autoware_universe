@@ -43,7 +43,7 @@ struct AstarParam
   bool use_back;               // backward search
 
   // search configs
-  double distance_heuristic_weight;  // obstacle threshold on grid [0,255]
+  double distance_heuristic_weight;  
 };
 
 struct AstarNode
@@ -77,7 +77,6 @@ struct NodeUpdate
   bool is_curve;
   bool is_back;
 
-  // Zwraca 'NodeUpdate' obrócony o kąt 'theta'.
   NodeUpdate rotated(const double theta) const
   {
     NodeUpdate result = *this;
@@ -86,7 +85,6 @@ struct NodeUpdate
     return result;
   }
 
-  // Zwraca odbicie lustrzane 'NodeUpdate' względem osi x.
   NodeUpdate flipped() const
   {
     NodeUpdate result = *this;
@@ -95,7 +93,6 @@ struct NodeUpdate
     return result;
   }
 
-  // Zwraca 'NodeUpdate' o przeciwnym kierunku ruchu.
   NodeUpdate reversed() const
   {
     NodeUpdate result = *this;
@@ -132,14 +129,12 @@ public:
     const geometry_msgs::msg::Pose & start_pose,
     const geometry_msgs::msg::Pose & goal_pose) override;
 
-  const PlannerWaypoints & getWaypoints() const { return waypoints_; } 
-
+  const PlannerWaypoints & getWaypoints() const { return waypoints_; }
   inline int getKey(const IndexXYT & index)
   {
     return (index.theta + (index.y * x_scale_ + index.x) * y_scale_);
   }
 
-  const visualization_msgs::msg::MarkerArray & getMarkerArray() const { return marker_array_; }
 
 private:
   bool search();
@@ -150,8 +145,6 @@ private:
   double estimateCost(const geometry_msgs::msg::Pose & pose) const;
   bool isGoal(const AstarNode & node) const;
   geometry_msgs::msg::Pose node2pose(const AstarNode & node) const;
-
-  void node2marker(const AstarNode & node);
 
   AstarNode * getNodeRef(const IndexXYT & index)
   {
