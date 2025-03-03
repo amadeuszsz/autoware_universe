@@ -41,8 +41,7 @@ bool update_param(
 
 autoware_perception_msgs::msg::DetectedObjects::SharedPtr getTransformedObjects(
   autoware_perception_msgs::msg::DetectedObjects::ConstSharedPtr objects,
-  const std::string & target_frame_id,
-  geometry_msgs::msg::TransformStamped::ConstSharedPtr transform)
+  const std::string & target_frame_id, geometry_msgs::msg::TransformStamped & transform)
 {
   autoware_perception_msgs::msg::DetectedObjects::SharedPtr output_objects =
     std::const_pointer_cast<autoware_perception_msgs::msg::DetectedObjects>(objects);
@@ -57,7 +56,7 @@ autoware_perception_msgs::msg::DetectedObjects::SharedPtr getTransformedObjects(
     geometry_msgs::msg::PoseStamped pose_stamped{};
     pose_stamped.pose = object.kinematics.pose_with_covariance.pose;
     geometry_msgs::msg::PoseStamped transformed_pose_stamped{};
-    tf2::doTransform(pose_stamped, transformed_pose_stamped, *transform);
+    tf2::doTransform(pose_stamped, transformed_pose_stamped, transform);
     object.kinematics.pose_with_covariance.pose = transformed_pose_stamped.pose;
   }
   return output_objects;
@@ -98,7 +97,7 @@ SimpleObjectMergerNode::SimpleObjectMergerNode(const rclcpp::NodeOptions & node_
   }
 
   // Subscriber
-  transform_listener_ = std::make_shared<autoware::universe_utils::TransformListener>(this);
+  managed_tf_buffer_ = std::make_shared<managed_transform_buffer::ManagedTransformBuffer>();
   sub_objects_array.resize(input_topic_size);
   objects_data_.resize(input_topic_size);
 
@@ -173,9 +172,11 @@ void SimpleObjectMergerNode::onTimer()
     double time_diff = rclcpp::Time(objects_data_.at(i)->header.stamp).seconds() -
                        rclcpp::Time(objects_data_.at(0)->header.stamp).seconds();
     if (std::abs(time_diff) < node_param_.timeout_threshold) {
-      transform_ = transform_listener_->getTransform(
+      auto tf_opt = managed_tf_buffer_->getTransform<geometry_msgs::msg::TransformStamped>(
         node_param_.new_frame_id, objects_data_.at(i)->header.frame_id,
-        objects_data_.at(i)->header.stamp, rclcpp::Duration::from_seconds(0.01));
+        objects_data_.at(i)->header.stamp, rclcpp::Duration::from_seconds(0.01),
+        this->get_logger());
+      if (tf_opt) transform_ = *tf_opt;
 
       DetectedObjects::SharedPtr transformed_objects =
         getTransformedObjects(objects_data_.at(i), node_param_.new_frame_id, transform_);

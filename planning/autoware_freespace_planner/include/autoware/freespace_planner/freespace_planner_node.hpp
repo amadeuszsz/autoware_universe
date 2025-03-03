@@ -55,9 +55,7 @@
 #endif
 
 #include <autoware/route_handler/route_handler.hpp>
-
-#include <tf2_ros/buffer.h>
-#include <tf2_ros/transform_listener.h>
+#include <managed_transform_buffer/managed_transform_buffer.hpp>
 
 #include <deque>
 #include <iostream>
@@ -127,9 +125,7 @@ private:
 
   rclcpp::TimerBase::SharedPtr timer_;
 
-  std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
-  std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
-
+  std::shared_ptr<managed_transform_buffer::ManagedTransformBuffer> managed_tf_buffer_;
   // params
   NodeParam node_param_;
   VehicleShape vehicle_shape_;

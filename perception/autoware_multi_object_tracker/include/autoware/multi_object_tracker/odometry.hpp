@@ -17,13 +17,11 @@
 
 #include "autoware/multi_object_tracker/object_model/types.hpp"
 
+#include <managed_transform_buffer/managed_transform_buffer.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
-
-#include <tf2_ros/buffer.h>
-#include <tf2_ros/transform_listener.h>
 
 #include <map>
 #include <optional>
@@ -54,8 +52,7 @@ private:
   std::string ego_frame_id_ = "base_link";  // ego vehicle frame
   std::string world_frame_id_;              // absolute/relative ground frame
   // tf
-  tf2_ros::Buffer tf_buffer_;
-  tf2_ros::TransformListener tf_listener_;
+  mutable managed_transform_buffer::ManagedTransformBuffer managed_tf_buffer_;
 
 public:
   bool enable_odometry_uncertainty_ = false;

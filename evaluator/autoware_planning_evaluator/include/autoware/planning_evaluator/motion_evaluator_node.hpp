@@ -17,13 +17,11 @@
 
 #include "autoware/planning_evaluator/metrics_calculator.hpp"
 #include "autoware/universe_utils/math/accumulator.hpp"
+#include "managed_transform_buffer/managed_transform_buffer.hpp"
 #include "rclcpp/rclcpp.hpp"
-#include "tf2_ros/buffer.h"
-#include "tf2_ros/transform_listener.h"
 
 #include "autoware_planning_msgs/msg/trajectory.hpp"
 #include "autoware_planning_msgs/msg/trajectory_point.hpp"
-#include "geometry_msgs/msg/transform_stamped.hpp"
 #include <nav_msgs/msg/odometry.hpp>
 
 #include <deque>
@@ -57,8 +55,7 @@ private:
 
   // ROS
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr twist_sub_;
-  std::unique_ptr<tf2_ros::Buffer> tf_buffer_ptr_;
-  std::unique_ptr<tf2_ros::TransformListener> tf_listener_ptr_;
+  std::unique_ptr<managed_transform_buffer::ManagedTransformBuffer> managed_tf_buffer_;
 
   // Parameters
   bool output_metrics_;

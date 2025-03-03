@@ -44,10 +44,10 @@ VoxelGeneratorTemplate::VoxelGeneratorTemplate(
 }
 
 bool VoxelGeneratorTemplate::enqueuePointCloud(
-  const sensor_msgs::msg::PointCloud2 & input_pointcloud_msg, const tf2_ros::Buffer & tf_buffer,
-  cudaStream_t stream)
+  const sensor_msgs::msg::PointCloud2 & input_pointcloud_msg,
+  managed_transform_buffer::ManagedTransformBuffer & managed_tf_buffer, cudaStream_t stream)
 {
-  return pd_ptr_->enqueuePointCloud(input_pointcloud_msg, tf_buffer, stream);
+  return pd_ptr_->enqueuePointCloud(input_pointcloud_msg, managed_tf_buffer, stream);
 }
 
 std::size_t VoxelGenerator::generateSweepPoints(float * points_d, cudaStream_t stream)

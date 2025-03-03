@@ -25,6 +25,7 @@
 #include <autoware/universe_utils/system/time_keeper.hpp>
 #include <builtin_interfaces/msg/time.hpp>
 #include <laser_geometry/laser_geometry.hpp>
+#include <managed_transform_buffer/managed_transform_buffer.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include <sensor_msgs/msg/laser_scan.hpp>
@@ -34,8 +35,6 @@
 #include <message_filters/subscriber.h>
 #include <message_filters/sync_policies/exact_time.h>
 #include <message_filters/synchronizer.h>
-#include <tf2_ros/buffer.h>
-#include <tf2_ros/transform_listener.h>
 
 #include <memory>
 #include <string>
@@ -46,12 +45,11 @@ using builtin_interfaces::msg::Time;
 using costmap_2d::OccupancyGridMapInterface;
 using costmap_2d::OccupancyGridMapUpdaterInterface;
 using laser_geometry::LaserProjection;
+using managed_transform_buffer::ManagedTransformBuffer;
 using nav2_costmap_2d::Costmap2D;
 using nav_msgs::msg::OccupancyGrid;
 using sensor_msgs::msg::LaserScan;
 using sensor_msgs::msg::PointCloud2;
-using tf2_ros::Buffer;
-using tf2_ros::TransformListener;
 
 class PointcloudBasedOccupancyGridMapNode : public rclcpp::Node
 {
@@ -73,8 +71,8 @@ private:
   std::unique_ptr<autoware::universe_utils::StopWatch<std::chrono::milliseconds>> stop_watch_ptr_{};
   std::unique_ptr<autoware::universe_utils::DebugPublisher> debug_publisher_ptr_{};
 
-  std::shared_ptr<Buffer> tf2_{std::make_shared<Buffer>(get_clock())};
-  std::shared_ptr<TransformListener> tf2_listener_{std::make_shared<TransformListener>(*tf2_)};
+  std::shared_ptr<ManagedTransformBuffer> managed_tf_buffer_ =
+    std::make_shared<ManagedTransformBuffer>();
 
   using SyncPolicy = message_filters::sync_policies::ExactTime<PointCloud2, PointCloud2>;
   using Sync = message_filters::Synchronizer<SyncPolicy>;

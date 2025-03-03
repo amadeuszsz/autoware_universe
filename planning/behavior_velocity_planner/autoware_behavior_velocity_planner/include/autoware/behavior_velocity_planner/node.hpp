@@ -21,6 +21,7 @@
 
 #include <autoware/behavior_velocity_planner_common/planner_data.hpp>
 #include <autoware/universe_utils/ros/published_time_publisher.hpp>
+#include <managed_transform_buffer/managed_transform_buffer.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include <autoware_internal_debug_msgs/srv/string.hpp>
@@ -33,9 +34,6 @@
 #include <tier4_planning_msgs/msg/path_with_lane_id.hpp>
 #include <tier4_planning_msgs/msg/velocity_limit.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
-
-#include <tf2_ros/buffer.h>
-#include <tf2_ros/transform_listener.h>
 
 #include <memory>
 #include <mutex>
@@ -54,8 +52,7 @@ public:
 
 private:
   // tf
-  tf2_ros::Buffer tf_buffer_;
-  tf2_ros::TransformListener tf_listener_;
+  managed_transform_buffer::ManagedTransformBuffer managed_tf_buffer_;
 
   // subscriber
   rclcpp::Subscription<tier4_planning_msgs::msg::PathWithLaneId>::SharedPtr

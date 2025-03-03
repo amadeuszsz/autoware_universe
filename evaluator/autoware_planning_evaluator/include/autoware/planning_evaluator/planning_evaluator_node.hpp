@@ -18,8 +18,6 @@
 #include "autoware/planning_evaluator/metrics_calculator.hpp"
 #include "autoware/universe_utils/math/accumulator.hpp"
 #include "rclcpp/rclcpp.hpp"
-#include "tf2_ros/buffer.h"
-#include "tf2_ros/transform_listener.h"
 
 #include <autoware/route_handler/route_handler.hpp>
 #include <autoware/universe_utils/ros/polling_subscriber.hpp>
@@ -148,8 +146,6 @@ private:
   rclcpp::Publisher<autoware_internal_debug_msgs::msg::Float64Stamped>::SharedPtr
     processing_time_pub_;
   rclcpp::Publisher<MetricArrayMsg>::SharedPtr metrics_pub_;
-  std::shared_ptr<tf2_ros::TransformListener> transform_listener_{nullptr};
-  std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
   autoware::route_handler::RouteHandler route_handler_;
 
   // Message to publish

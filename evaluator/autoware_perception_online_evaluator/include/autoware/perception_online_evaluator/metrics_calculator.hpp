@@ -20,7 +20,7 @@
 #include "autoware/perception_online_evaluator/metrics/metric.hpp"
 #include "autoware/perception_online_evaluator/parameters.hpp"
 #include "autoware/perception_online_evaluator/utils/objects_filtering.hpp"
-#include "tf2_ros/buffer.h"
+#include "managed_transform_buffer/managed_transform_buffer.hpp"
 
 #include <rclcpp/time.hpp>
 
@@ -102,9 +102,13 @@ public:
    * @param [in] objects predicted objects
    * @param [in] tf_buffer tf buffer
    */
-  void setPredictedObjects(const PredictedObjects & objects, const tf2_ros::Buffer & tf_buffer);
+  void setPredictedObjects(
+    const PredictedObjects & objects,
+    managed_transform_buffer::ManagedTransformBuffer & managed_tf_buffer);
 
-  void updateObjectsCountMap(const PredictedObjects & objects, const tf2_ros::Buffer & tf_buffer);
+  void updateObjectsCountMap(
+    const PredictedObjects & objects,
+    managed_transform_buffer::ManagedTransformBuffer & managed_tf_buffer);
 
   HistoryPathMap getHistoryPathMap() const { return history_path_map_; }
   ObjectDataMap getDebugObjectData() const { return debug_target_object_; }

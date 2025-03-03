@@ -33,7 +33,7 @@ namespace autoware::accel_brake_map_calibrator
 AccelBrakeMapCalibrator::AccelBrakeMapCalibrator(const rclcpp::NodeOptions & node_options)
 : Node("accel_brake_map_calibrator", node_options)
 {
-  transform_listener_ = std::make_shared<autoware::universe_utils::TransformListener>(this);
+  managed_tf_buffer_ = std::make_shared<managed_transform_buffer::ManagedTransformBuffer>();
   // get parameter
   update_hz_ = declare_parameter<double>("update_hz", 10.0);
   covariance_ = declare_parameter<double>("initial_covariance", 0.05);
@@ -247,17 +247,13 @@ bool AccelBrakeMapCalibrator::get_current_pitch_from_tf(double * pitch)
   }
 
   // get tf
-  const auto transform = transform_listener_->getTransform(
-    "map", "base_link", rclcpp::Time(0), rclcpp::Duration::from_seconds(0.5));
-  if (!transform) {
-    RCLCPP_WARN_STREAM_THROTTLE(
-      get_logger(), *get_clock(), 5000, "cannot get map to base_link transform. ");
-    return false;
-  }
+  auto transform_opt = managed_tf_buffer_->getTransform<geometry_msgs::msg::TransformStamped>(
+    "map", "base_link", rclcpp::Time(0), rclcpp::Duration::from_seconds(0.5), this->get_logger());
+  if (!transform_opt) return false;
   double roll = 0.0;
   double raw_pitch = 0.0;
   double yaw = 0.0;
-  tf2::getEulerYPR(transform->transform.rotation, roll, raw_pitch, yaw);
+  tf2::getEulerYPR(transform_opt->transform.rotation, roll, raw_pitch, yaw);
   debug_values_.data.at(CURRENT_RAW_PITCH) = static_cast<float>(raw_pitch);
   *pitch = lowpass(*pitch, raw_pitch, 0.2);
   debug_values_.data.at(CURRENT_PITCH) = static_cast<float>(*pitch);

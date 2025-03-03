@@ -21,10 +21,9 @@
 #include "message_filters/synchronizer.h"
 #include "rclcpp/rclcpp.hpp"
 
-#include "tier4_perception_msgs/msg/detected_objects_with_feature.hpp"
+#include <managed_transform_buffer/managed_transform_buffer.hpp>
 
-#include <tf2_ros/buffer.h>
-#include <tf2_ros/transform_listener.h>
+#include "tier4_perception_msgs/msg/detected_objects_with_feature.hpp"
 
 #include <chrono>
 #include <memory>
@@ -44,8 +43,7 @@ public:
 private:
   // Subscriber
 
-  tf2_ros::Buffer tf_buffer_;
-  tf2_ros::TransformListener tf_listener_;
+  managed_transform_buffer::ManagedTransformBuffer managed_tf_buffer_;
 
   message_filters::Subscriber<DetectedObjectsWithFeature> objects0_sub_;
   message_filters::Subscriber<DetectedObjectsWithFeature> objects1_sub_;

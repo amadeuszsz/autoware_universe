@@ -15,8 +15,9 @@
 #ifndef SIMPLE_OBJECT_MERGER_NODE_HPP_
 #define SIMPLE_OBJECT_MERGER_NODE_HPP_
 
-#include "autoware/universe_utils/ros/transform_listener.hpp"
 #include "rclcpp/rclcpp.hpp"
+
+#include <managed_transform_buffer/managed_transform_buffer.hpp>
 
 #include "autoware_perception_msgs/msg/detected_objects.hpp"
 
@@ -47,14 +48,14 @@ private:
   // Subscriber
   rclcpp::Subscription<DetectedObjects>::SharedPtr sub_objects_{};
   std::vector<rclcpp::Subscription<DetectedObjects>::SharedPtr> sub_objects_array{};
-  std::shared_ptr<autoware::universe_utils::TransformListener> transform_listener_;
+  std::shared_ptr<managed_transform_buffer::ManagedTransformBuffer> managed_tf_buffer_;
 
   // Callback
   void onData(const DetectedObjects::ConstSharedPtr msg, size_t array_number);
 
   // Data Buffer
   std::vector<DetectedObjects::ConstSharedPtr> objects_data_{};
-  geometry_msgs::msg::TransformStamped::ConstSharedPtr transform_;
+  geometry_msgs::msg::TransformStamped transform_;
 
   // Publisher
   rclcpp::Publisher<DetectedObjects>::SharedPtr pub_objects_{};

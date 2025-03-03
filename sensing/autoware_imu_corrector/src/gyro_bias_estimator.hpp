@@ -16,8 +16,8 @@
 
 #include "gyro_bias_estimation_module.hpp"
 
-#include <autoware/universe_utils/ros/transform_listener.hpp>
 #include <diagnostic_updater/diagnostic_updater.hpp>
+#include <managed_transform_buffer/managed_transform_buffer.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
@@ -76,7 +76,7 @@ private:
 
   std::optional<Vector3> gyro_bias_;
 
-  std::shared_ptr<autoware::universe_utils::TransformListener> transform_listener_;
+  std::shared_ptr<managed_transform_buffer::ManagedTransformBuffer> managed_tf_buffer_;
 
   std::string imu_frame_;
 

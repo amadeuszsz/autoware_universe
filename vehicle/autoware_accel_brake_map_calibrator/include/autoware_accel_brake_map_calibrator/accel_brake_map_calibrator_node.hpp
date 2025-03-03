@@ -19,10 +19,10 @@
 
 #include "autoware/universe_utils/ros/logger_level_configure.hpp"
 #include "autoware/universe_utils/ros/polling_subscriber.hpp"
-#include "autoware/universe_utils/ros/transform_listener.hpp"
 #include "autoware_raw_vehicle_cmd_converter/accel_map.hpp"
 #include "autoware_raw_vehicle_cmd_converter/brake_map.hpp"
 #include "diagnostic_updater/diagnostic_updater.hpp"
+#include "managed_transform_buffer/managed_transform_buffer.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "tf2/utils.h"
 
@@ -89,7 +89,7 @@ using DataStampedPtr = std::shared_ptr<DataStamped>;
 class AccelBrakeMapCalibrator : public rclcpp::Node
 {
 private:
-  std::shared_ptr<autoware::universe_utils::TransformListener> transform_listener_;
+  std::shared_ptr<managed_transform_buffer::ManagedTransformBuffer> managed_tf_buffer_;
   std::string csv_default_map_dir_;
   rclcpp::Publisher<OccupancyGrid>::SharedPtr original_map_occ_pub_;
   rclcpp::Publisher<OccupancyGrid>::SharedPtr update_map_occ_pub_;

@@ -92,7 +92,7 @@ RadarTracksMsgsConverterNode::RadarTracksMsgsConverterNode(const rclcpp::NodeOpt
   sub_odometry_ = create_subscription<Odometry>(
     "~/input/odometry", rclcpp::QoS{1},
     std::bind(&RadarTracksMsgsConverterNode::onTwist, this, _1));
-  transform_listener_ = std::make_shared<autoware::universe_utils::TransformListener>(this);
+  managed_tf_buffer_ = std::make_shared<managed_transform_buffer::ManagedTransformBuffer>();
 
   // Publisher
   pub_tracked_objects_ = create_publisher<TrackedObjects>("~/output/radar_tracked_objects", 1);
@@ -158,8 +158,9 @@ void RadarTracksMsgsConverterNode::onTimer()
     return;
   }
   const auto & header = radar_data_->header;
-  transform_ = transform_listener_->getTransform(
-    node_param_.new_frame_id, header.frame_id, header.stamp, rclcpp::Duration::from_seconds(0.01));
+  transform_opt_ = managed_tf_buffer_->getTransform<geometry_msgs::msg::TransformStamped>(
+    node_param_.new_frame_id, header.frame_id, header.stamp, rclcpp::Duration::from_seconds(0.01),
+    this->get_logger());
 
   TrackedObjects tracked_objects = convertRadarTrackToTrackedObjects();
   DetectedObjects detected_objects = convertTrackedObjectsToDetectedObjects(tracked_objects);
@@ -206,7 +207,7 @@ bool RadarTracksMsgsConverterNode::isStaticObject(
   }
 
   // Calculate azimuth angle of the object in the vehicle coordinate
-  const double sensor_yaw = tf2::getYaw(transform_->transform.rotation);
+  const double sensor_yaw = tf2::getYaw(transform_opt_->transform.rotation);
   const double radar_azimuth = std::atan2(radar_track.position.y, radar_track.position.x);
   const double azimuth = radar_azimuth + sensor_yaw;
 
@@ -238,12 +239,12 @@ TrackedObjects RadarTracksMsgsConverterNode::convertRadarTrackToTrackedObjects()
     radar_pose_stamped.pose.position = radar_track.position;
 
     geometry_msgs::msg::PoseStamped transformed_pose_stamped{};
-    if (transform_ == nullptr) {
+    if (!transform_opt_) {
       RCLCPP_ERROR_THROTTLE(
         get_logger(), *get_clock(), 5000, "getTransform failed. radar output will be empty.");
       return tracked_objects;
     }
-    tf2::doTransform(radar_pose_stamped, transformed_pose_stamped, *transform_);
+    tf2::doTransform(radar_pose_stamped, transformed_pose_stamped, *transform_opt_);
     const auto & position_from_veh = transformed_pose_stamped.pose.position;
 
     // Velocity conversion
@@ -304,7 +305,7 @@ geometry_msgs::msg::Vector3 RadarTracksMsgsConverterNode::compensateVelocitySens
   // initialize compensated velocity
   geometry_msgs::msg::Vector3 compensated_velocity{};
 
-  const double sensor_yaw = tf2::getYaw(transform_->transform.rotation);
+  const double sensor_yaw = tf2::getYaw(transform_opt_->transform.rotation);
   const geometry_msgs::msg::Vector3 & vel = radar_track.velocity;
   compensated_velocity.x = vel.x * std::cos(sensor_yaw) - vel.y * std::sin(sensor_yaw);
   compensated_velocity.y = vel.x * std::sin(sensor_yaw) + vel.y * std::cos(sensor_yaw);

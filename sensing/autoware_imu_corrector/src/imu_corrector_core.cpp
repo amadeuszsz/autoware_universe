@@ -60,7 +60,7 @@ ImuCorrector::ImuCorrector(const rclcpp::NodeOptions & options)
 : rclcpp::Node("imu_corrector", options),
   output_frame_(declare_parameter<std::string>("base_link", "base_link"))
 {
-  transform_listener_ = std::make_shared<autoware::universe_utils::TransformListener>(this);
+  managed_tf_buffer_ = std::make_shared<managed_transform_buffer::ManagedTransformBuffer>();
 
   angular_velocity_offset_x_imu_link_ = declare_parameter<double>("angular_velocity_offset_x", 0.0);
   angular_velocity_offset_y_imu_link_ = declare_parameter<double>("angular_velocity_offset_y", 0.0);
@@ -103,24 +103,20 @@ void ImuCorrector::callback_imu(const sensor_msgs::msg::Imu::ConstSharedPtr imu_
   imu_msg.linear_acceleration_covariance[COV_IDX::Z_Z] =
     accel_stddev_imu_link_ * accel_stddev_imu_link_;
 
-  geometry_msgs::msg::TransformStamped::ConstSharedPtr tf_imu2base_ptr =
-    transform_listener_->getLatestTransform(imu_msg.header.frame_id, output_frame_);
-  if (!tf_imu2base_ptr) {
-    RCLCPP_ERROR(
-      this->get_logger(), "Please publish TF %s to %s", output_frame_.c_str(),
-      (imu_msg.header.frame_id).c_str());
-    return;
-  }
+  auto tf_imu2base_opt =
+    managed_tf_buffer_->getLatestTransform<geometry_msgs::msg::TransformStamped>(
+      imu_msg.header.frame_id, output_frame_, this->get_logger());
+  if (!tf_imu2base_opt) return;
 
   sensor_msgs::msg::Imu imu_msg_base_link;
   imu_msg_base_link.header.stamp = imu_msg_ptr->header.stamp;
   imu_msg_base_link.header.frame_id = output_frame_;
   imu_msg_base_link.linear_acceleration =
-    transform_vector3(imu_msg.linear_acceleration, *tf_imu2base_ptr);
+    transform_vector3(imu_msg.linear_acceleration, *tf_imu2base_opt);
   imu_msg_base_link.linear_acceleration_covariance =
     transform_covariance(imu_msg.linear_acceleration_covariance);
   imu_msg_base_link.angular_velocity =
-    transform_vector3(imu_msg.angular_velocity, *tf_imu2base_ptr);
+    transform_vector3(imu_msg.angular_velocity, *tf_imu2base_opt);
   imu_msg_base_link.angular_velocity_covariance =
     transform_covariance(imu_msg.angular_velocity_covariance);
 

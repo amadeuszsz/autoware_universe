@@ -21,6 +21,8 @@
 #include <autoware/universe_utils/ros/update_param.hpp>
 #include <autoware_vehicle_info_utils/vehicle_info_utils.hpp>
 
+#include <geometry_msgs/msg/detail/transform_stamped__struct.hpp>
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -50,7 +52,7 @@ ObstacleCollisionCheckerNode::ObstacleCollisionCheckerNode(const rclcpp::NodeOpt
 
   // Subscriber
   self_pose_listener_ = std::make_shared<autoware::universe_utils::SelfPoseListener>(this);
-  transform_listener_ = std::make_shared<autoware::universe_utils::TransformListener>(this);
+  managed_tf_buffer_ = std::make_shared<managed_transform_buffer::ManagedTransformBuffer>();
 
   sub_obstacle_pointcloud_ = create_subscription<sensor_msgs::msg::PointCloud2>(
     "input/obstacle_pointcloud", rclcpp::SensorDataQoS(),
@@ -177,15 +179,11 @@ void ObstacleCollisionCheckerNode::on_timer()
   current_pose_ = self_pose_listener_->getCurrentPose();
   if (obstacle_pointcloud_) {
     const auto & header = obstacle_pointcloud_->header;
-    try {
-      obstacle_transform_ = transform_listener_->getTransform(
-        "map", header.frame_id, header.stamp, rclcpp::Duration::from_seconds(0.01));
-    } catch (tf2::TransformException & ex) {
-      RCLCPP_INFO(
-        this->get_logger(), "Could not transform map to %s: %s", header.frame_id.c_str(),
-        ex.what());
-      return;
-    }
+    auto tf_opt = managed_tf_buffer_->getTransform<geometry_msgs::msg::TransformStamped>(
+      "map", header.frame_id, header.stamp, rclcpp::Duration::from_seconds(0.01),
+      this->get_logger());
+    if (!tf_opt) return;
+    obstacle_transform_ = std::make_shared<geometry_msgs::msg::TransformStamped>(*tf_opt);
   }
 
   if (!is_data_ready()) {

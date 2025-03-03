@@ -30,8 +30,6 @@ namespace autoware::planning_test_manager
 PlanningInterfaceTestManager::PlanningInterfaceTestManager()
 {
   test_node_ = std::make_shared<rclcpp::Node>("planning_interface_test_node");
-  tf_buffer_ = std::make_shared<tf2_ros::Buffer>(test_node_->get_clock());
-  tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 }
 
 void PlanningInterfaceTestManager::publishOdometry(

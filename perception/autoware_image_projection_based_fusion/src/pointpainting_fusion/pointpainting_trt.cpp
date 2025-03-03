@@ -39,9 +39,10 @@ PointPaintingTRT::PointPaintingTRT(
 }
 
 bool PointPaintingTRT::preprocess(
-  const sensor_msgs::msg::PointCloud2 & input_pointcloud_msg, const tf2_ros::Buffer & tf_buffer)
+  const sensor_msgs::msg::PointCloud2 & input_pointcloud_msg,
+  managed_transform_buffer::ManagedTransformBuffer & managed_tf_buffer)
 {
-  bool is_success = vg_ptr_pp_->enqueuePointCloud(input_pointcloud_msg, tf_buffer);
+  bool is_success = vg_ptr_pp_->enqueuePointCloud(input_pointcloud_msg, managed_tf_buffer);
   if (!is_success) {
     return false;
   }

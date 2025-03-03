@@ -22,6 +22,7 @@
 
 #include <autoware/motion_utils/vehicle/vehicle_state_checker.hpp>
 #include <autoware_vehicle_info_utils/vehicle_info_utils.hpp>
+#include <managed_transform_buffer/managed_transform_buffer.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include <autoware_internal_debug_msgs/msg/float64_stamped.hpp>
@@ -35,8 +36,6 @@
 #include <visualization_msgs/msg/marker_array.hpp>
 
 #include <tf2/utils.h>
-#include <tf2_ros/buffer.h>
-#include <tf2_ros/transform_listener.h>
 
 #include <memory>
 #include <optional>
@@ -83,18 +82,13 @@ private:
 
   std::optional<Obstacle> getNearestObstacleByDynamicObject() const;
 
-  std::optional<geometry_msgs::msg::TransformStamped> getTransform(
-    const std::string & source, const std::string & target, const rclcpp::Time & stamp,
-    double duration_sec) const;
-
   auto isStopRequired(
     const bool is_obstacle_found, const bool is_vehicle_stopped, const State & state,
     const std::optional<rclcpp::Time> & last_obstacle_found_time, const double time_threshold) const
     -> std::pair<bool, std::optional<rclcpp::Time>>;
 
   // ros
-  mutable tf2_ros::Buffer tf_buffer_{get_clock()};
-  mutable tf2_ros::TransformListener tf_listener_{tf_buffer_};
+  mutable managed_transform_buffer::ManagedTransformBuffer managed_tf_buffer_;
   rclcpp::TimerBase::SharedPtr timer_;
 
   // publisher and subscriber

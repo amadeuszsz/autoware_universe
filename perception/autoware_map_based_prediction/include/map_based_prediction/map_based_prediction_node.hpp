@@ -23,10 +23,10 @@
 #include <autoware/universe_utils/ros/debug_publisher.hpp>
 #include <autoware/universe_utils/ros/polling_subscriber.hpp>
 #include <autoware/universe_utils/ros/published_time_publisher.hpp>
-#include <autoware/universe_utils/ros/transform_listener.hpp>
 #include <autoware/universe_utils/ros/update_param.hpp>
 #include <autoware/universe_utils/system/lru_cache.hpp>
 #include <autoware/universe_utils/system/time_keeper.hpp>
+#include <managed_transform_buffer/managed_transform_buffer.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include <geometry_msgs/msg/pose.hpp>
@@ -107,7 +107,7 @@ private:
     const std::vector<rclcpp::Parameter> & parameters);
 
   // Pose Transform Listener
-  autoware::universe_utils::TransformListener transform_listener_{this};
+  std::shared_ptr<managed_transform_buffer::ManagedTransformBuffer> managed_tf_buffer_;
 
   // Path Generator
   std::shared_ptr<PathGenerator> path_generator_;

@@ -15,8 +15,7 @@
 #ifndef RADAR_STATIC_POINTCLOUD_FILTER_NODE_HPP_
 #define RADAR_STATIC_POINTCLOUD_FILTER_NODE_HPP_
 
-#include "autoware/universe_utils/ros/transform_listener.hpp"
-
+#include <managed_transform_buffer/managed_transform_buffer.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include <nav_msgs/msg/odometry.hpp>
@@ -51,7 +50,7 @@ private:
   // Subscriber
   message_filters::Subscriber<RadarScan> sub_radar_{};
   message_filters::Subscriber<Odometry> sub_odometry_{};
-  std::shared_ptr<autoware::universe_utils::TransformListener> transform_listener_;
+  std::shared_ptr<managed_transform_buffer::ManagedTransformBuffer> managed_tf_buffer_;
 
   using SyncPolicy = message_filters::sync_policies::ApproximateTime<RadarScan, Odometry>;
   using Sync = message_filters::Synchronizer<SyncPolicy>;
@@ -75,7 +74,7 @@ private:
   // Function
   bool isStaticPointcloud(
     const RadarReturn & radar_return, const Odometry::ConstSharedPtr & odom_msg,
-    geometry_msgs::msg::TransformStamped::ConstSharedPtr transform);
+    geometry_msgs::msg::TransformStamped & transform);
 };
 }  // namespace autoware::radar_static_pointcloud_filter
 

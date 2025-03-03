@@ -15,8 +15,9 @@
 #ifndef RADAR_TRACKS_MSGS_CONVERTER_NODE_HPP_
 #define RADAR_TRACKS_MSGS_CONVERTER_NODE_HPP_
 
-#include "autoware/universe_utils/ros/transform_listener.hpp"
 #include "rclcpp/rclcpp.hpp"
+
+#include <managed_transform_buffer/managed_transform_buffer.hpp>
 
 #include "autoware_perception_msgs/msg/detected_objects.hpp"
 #include "autoware_perception_msgs/msg/object_classification.hpp"
@@ -64,7 +65,7 @@ private:
   // Subscriber
   rclcpp::Subscription<RadarTracks>::SharedPtr sub_radar_{};
   rclcpp::Subscription<Odometry>::SharedPtr sub_odometry_{};
-  std::shared_ptr<autoware::universe_utils::TransformListener> transform_listener_;
+  std::shared_ptr<managed_transform_buffer::ManagedTransformBuffer> managed_tf_buffer_;
 
   // Callback
   void onRadarTracks(const RadarTracks::ConstSharedPtr msg);
@@ -73,7 +74,7 @@ private:
   // Data Buffer
   RadarTracks::ConstSharedPtr radar_data_{};
   Odometry::ConstSharedPtr odometry_data_{};
-  geometry_msgs::msg::TransformStamped::ConstSharedPtr transform_;
+  std::optional<geometry_msgs::msg::TransformStamped> transform_opt_;
 
   // Publisher
   rclcpp::Publisher<TrackedObjects>::SharedPtr pub_tracked_objects_{};

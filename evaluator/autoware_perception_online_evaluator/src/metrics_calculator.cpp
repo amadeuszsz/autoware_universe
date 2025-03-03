@@ -488,7 +488,8 @@ MetricValueMap MetricsCalculator::calcObjectsCountMetrics() const
 }
 
 void MetricsCalculator::setPredictedObjects(
-  const PredictedObjects & objects, const tf2_ros::Buffer & tf_buffer)
+  const PredictedObjects & objects,
+  managed_transform_buffer::ManagedTransformBuffer & managed_tf_buffer)
 {
   current_stamp_ = objects.header.stamp;
 
@@ -504,7 +505,7 @@ void MetricsCalculator::setPredictedObjects(
   }
 
   // store objects to calculate object count
-  detection_counter_.addObjects(objects, tf_buffer);
+  detection_counter_.addObjects(objects, managed_tf_buffer);
 }
 
 void MetricsCalculator::deleteOldObjects(const rclcpp::Time stamp)

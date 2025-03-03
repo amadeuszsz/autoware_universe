@@ -15,8 +15,7 @@
 #ifndef AUTOWARE__LIDAR_CENTERPOINT__PREPROCESS__POINTCLOUD_DENSIFICATION_HPP_
 #define AUTOWARE__LIDAR_CENTERPOINT__PREPROCESS__POINTCLOUD_DENSIFICATION_HPP_
 
-#include "tf2_ros/buffer.h"
-#include "tf2_ros/transform_listener.h"
+#include <managed_transform_buffer/managed_transform_buffer.hpp>
 
 #include <list>
 #include <string>
@@ -63,8 +62,8 @@ public:
   explicit PointCloudDensification(const DensificationParam & param);
 
   bool enqueuePointCloud(
-    const sensor_msgs::msg::PointCloud2 & input_pointcloud_msg, const tf2_ros::Buffer & tf_buffer,
-    cudaStream_t stream);
+    const sensor_msgs::msg::PointCloud2 & input_pointcloud_msg,
+    managed_transform_buffer::ManagedTransformBuffer & managed_tf_buffer, cudaStream_t stream);
 
   double getCurrentTimestamp() const { return current_timestamp_; }
   Eigen::Affine3f getAffineWorldToCurrent() const { return affine_world2current_; }

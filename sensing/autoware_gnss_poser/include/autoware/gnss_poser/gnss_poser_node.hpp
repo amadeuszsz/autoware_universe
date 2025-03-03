@@ -34,8 +34,9 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #endif
 
+#include <managed_transform_buffer/managed_transform_buffer.hpp>
+
 #include <tf2_ros/transform_broadcaster.h>
-#include <tf2_ros/transform_listener.h>
 
 #include <string>
 
@@ -75,8 +76,7 @@ private:
     const std::string & frame_id, const std::string & child_frame_id,
     const geometry_msgs::msg::PoseStamped & pose_msg);
 
-  tf2::BufferCore tf2_buffer_;
-  tf2_ros::TransformListener tf2_listener_;
+  managed_transform_buffer::ManagedTransformBuffer managed_tf_buffer_;
   tf2_ros::TransformBroadcaster tf2_broadcaster_;
 
   autoware::component_interface_utils::Subscription<MapProjectorInfo>::SharedPtr

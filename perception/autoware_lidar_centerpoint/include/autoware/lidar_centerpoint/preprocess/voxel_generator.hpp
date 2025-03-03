@@ -35,8 +35,8 @@ public:
   virtual std::size_t generateSweepPoints(float * d_points, cudaStream_t stream) = 0;
 
   bool enqueuePointCloud(
-    const sensor_msgs::msg::PointCloud2 & input_pointcloud_msg, const tf2_ros::Buffer & tf_buffer,
-    cudaStream_t stream);
+    const sensor_msgs::msg::PointCloud2 & input_pointcloud_msg,
+    managed_transform_buffer::ManagedTransformBuffer & managed_tf_buffer, cudaStream_t stream);
 
 protected:
   std::unique_ptr<PointCloudDensification> pd_ptr_{nullptr};

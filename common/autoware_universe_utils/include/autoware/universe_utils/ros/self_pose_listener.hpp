@@ -16,7 +16,7 @@
 #define AUTOWARE__UNIVERSE_UTILS__ROS__SELF_POSE_LISTENER_HPP_
 
 #include "autoware/universe_utils/geometry/geometry.hpp"
-#include "autoware/universe_utils/ros/transform_listener.hpp"
+#include "managed_transform_buffer/managed_transform_buffer.hpp"
 
 #include <rclcpp/rclcpp.hpp>
 
@@ -27,7 +27,7 @@ namespace autoware::universe_utils
 class SelfPoseListener
 {
 public:
-  explicit SelfPoseListener(rclcpp::Node * node) : transform_listener_(node) {}
+  explicit SelfPoseListener(rclcpp::Node * const node) : node_(node), managed_tf_buffer_() {}
 
   void waitForFirstPose()
   {
@@ -35,14 +35,15 @@ public:
       if (getCurrentPose()) {
         return;
       }
-      RCLCPP_INFO(transform_listener_.getLogger(), "waiting for self pose...");
+      RCLCPP_INFO(node_->get_logger(), "waiting for self pose...");
       rclcpp::Rate(0.2).sleep();
     }
   }
 
   geometry_msgs::msg::PoseStamped::ConstSharedPtr getCurrentPose()
   {
-    const auto tf = transform_listener_.getLatestTransform("map", "base_link");
+    const auto tf = managed_tf_buffer_.getLatestTransform<geometry_msgs::msg::TransformStamped>(
+      "map", "base_link", node_->get_logger());
     if (!tf) {
       return {};
     }
@@ -51,7 +52,8 @@ public:
   }
 
 private:
-  TransformListener transform_listener_;
+  rclcpp::Node * const node_;
+  managed_transform_buffer::ManagedTransformBuffer managed_tf_buffer_;
 };
 }  // namespace autoware::universe_utils
 

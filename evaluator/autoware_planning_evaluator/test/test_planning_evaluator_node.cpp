@@ -19,6 +19,7 @@
 #include "tf2_ros/transform_broadcaster.h"
 
 #include <autoware/planning_evaluator/planning_evaluator_node.hpp>
+#include <tf2/LinearMath/Quaternion.hpp>
 
 #include "autoware_perception_msgs/msg/predicted_objects.hpp"
 #include "autoware_planning_msgs/msg/trajectory.hpp"

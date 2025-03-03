@@ -48,8 +48,7 @@ private:
   float z_threshold_;
 
   // tf2 listener
-  std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
-  std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+  std::shared_ptr<managed_transform_buffer::ManagedTransformBuffer> managed_tf_buffer_;
 
 public:
   PCL_MAKE_ALIGNED_OPERATOR_NEW

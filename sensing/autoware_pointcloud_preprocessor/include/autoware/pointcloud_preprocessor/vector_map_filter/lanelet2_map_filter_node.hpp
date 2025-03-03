@@ -33,7 +33,7 @@
 #include <tf2_eigen/tf2_eigen.hpp>
 #endif
 
-#include <tf2_ros/transform_listener.h>
+#include <managed_transform_buffer/managed_transform_buffer.hpp>
 
 #include <memory>
 #include <mutex>
@@ -56,8 +56,7 @@ public:
   explicit Lanelet2MapFilterComponent(const rclcpp::NodeOptions & options);
 
 private:
-  std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
-  std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+  std::shared_ptr<managed_transform_buffer::ManagedTransformBuffer> managed_tf_buffer_;
 
   rclcpp::Subscription<autoware_map_msgs::msg::LaneletMapBin>::SharedPtr map_sub_;
   rclcpp::Subscription<PointCloud2>::SharedPtr pointcloud_sub_;

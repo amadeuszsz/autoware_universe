@@ -24,6 +24,7 @@
 #include <autoware/universe_utils/ros/transform_listener.hpp>
 #include <autoware_vehicle_info_utils/vehicle_info.hpp>
 #include <diagnostic_updater/diagnostic_updater.hpp>
+#include <managed_transform_buffer/managed_transform_buffer.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include <autoware_planning_msgs/msg/trajectory.hpp>
@@ -49,7 +50,7 @@ public:
 private:
   // Subscriber
   std::shared_ptr<autoware::universe_utils::SelfPoseListener> self_pose_listener_;
-  std::shared_ptr<autoware::universe_utils::TransformListener> transform_listener_;
+  std::shared_ptr<managed_transform_buffer::ManagedTransformBuffer> managed_tf_buffer_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_obstacle_pointcloud_;
   rclcpp::Subscription<autoware_planning_msgs::msg::Trajectory>::SharedPtr
     sub_reference_trajectory_;

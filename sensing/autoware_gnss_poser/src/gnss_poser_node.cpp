@@ -28,7 +28,6 @@ namespace autoware::gnss_poser
 {
 GNSSPoser::GNSSPoser(const rclcpp::NodeOptions & node_options)
 : rclcpp::Node("gnss_poser", node_options),
-  tf2_listener_(tf2_buffer_),
   tf2_broadcaster_(*this),
   base_frame_(declare_parameter<std::string>("base_frame")),
   gnss_base_frame_(declare_parameter<std::string>("gnss_base_frame")),
@@ -305,30 +304,9 @@ bool GNSSPoser::get_transform(
   const std::string & target_frame, const std::string & source_frame,
   const geometry_msgs::msg::TransformStamped::SharedPtr transform_stamped_ptr)
 {
-  if (target_frame == source_frame) {
-    transform_stamped_ptr->header.stamp = this->now();
-    transform_stamped_ptr->header.frame_id = target_frame;
-    transform_stamped_ptr->child_frame_id = source_frame;
-    transform_stamped_ptr->transform.translation.x = 0.0;
-    transform_stamped_ptr->transform.translation.y = 0.0;
-    transform_stamped_ptr->transform.translation.z = 0.0;
-    transform_stamped_ptr->transform.rotation.x = 0.0;
-    transform_stamped_ptr->transform.rotation.y = 0.0;
-    transform_stamped_ptr->transform.rotation.z = 0.0;
-    transform_stamped_ptr->transform.rotation.w = 1.0;
-    return true;
-  }
-
-  try {
-    *transform_stamped_ptr =
-      tf2_buffer_.lookupTransform(target_frame, source_frame, tf2::TimePointZero);
-  } catch (tf2::TransformException & ex) {
-    RCLCPP_WARN_STREAM_THROTTLE(
-      this->get_logger(), *this->get_clock(), std::chrono::milliseconds(1000).count(), ex.what());
-    RCLCPP_WARN_STREAM_THROTTLE(
-      this->get_logger(), *this->get_clock(), std::chrono::milliseconds(1000).count(),
-      "Please publish TF " << target_frame.c_str() << " to " << source_frame.c_str());
-
+  auto transform_opt = managed_tf_buffer_.getLatestTransform<geometry_msgs::msg::TransformStamped>(
+    target_frame, source_frame, this->get_logger());
+  if (!transform_opt) {
     transform_stamped_ptr->header.stamp = this->now();
     transform_stamped_ptr->header.frame_id = target_frame;
     transform_stamped_ptr->child_frame_id = source_frame;
@@ -341,6 +319,7 @@ bool GNSSPoser::get_transform(
     transform_stamped_ptr->transform.rotation.w = 1.0;
     return false;
   }
+  *transform_stamped_ptr = *transform_opt;
   return true;
 }
 
@@ -349,31 +328,11 @@ bool GNSSPoser::get_static_transform(
   const geometry_msgs::msg::TransformStamped::SharedPtr transform_stamped_ptr,
   const builtin_interfaces::msg::Time & stamp)
 {
-  if (target_frame == source_frame) {
-    transform_stamped_ptr->header.stamp = stamp;
-    transform_stamped_ptr->header.frame_id = target_frame;
-    transform_stamped_ptr->child_frame_id = source_frame;
-    transform_stamped_ptr->transform.translation.x = 0.0;
-    transform_stamped_ptr->transform.translation.y = 0.0;
-    transform_stamped_ptr->transform.translation.z = 0.0;
-    transform_stamped_ptr->transform.rotation.x = 0.0;
-    transform_stamped_ptr->transform.rotation.y = 0.0;
-    transform_stamped_ptr->transform.rotation.z = 0.0;
-    transform_stamped_ptr->transform.rotation.w = 1.0;
-    return true;
-  }
-
-  try {
-    *transform_stamped_ptr = tf2_buffer_.lookupTransform(
-      target_frame, source_frame,
-      tf2::TimePoint(std::chrono::seconds(stamp.sec) + std::chrono::nanoseconds(stamp.nanosec)));
-  } catch (tf2::TransformException & ex) {
-    RCLCPP_WARN_STREAM_THROTTLE(
-      this->get_logger(), *this->get_clock(), std::chrono::milliseconds(1000).count(), ex.what());
-    RCLCPP_WARN_STREAM_THROTTLE(
-      this->get_logger(), *this->get_clock(), std::chrono::milliseconds(1000).count(),
-      "Please publish TF " << target_frame.c_str() << " to " << source_frame.c_str());
-
+  auto transform_opt = managed_tf_buffer_.getTransform<geometry_msgs::msg::TransformStamped>(
+    target_frame, source_frame,
+    tf2::TimePoint(std::chrono::seconds(stamp.sec) + std::chrono::nanoseconds(stamp.nanosec)),
+    tf2::Duration::zero(), this->get_logger());
+  if (!transform_opt) {
     transform_stamped_ptr->header.stamp = stamp;
     transform_stamped_ptr->header.frame_id = target_frame;
     transform_stamped_ptr->child_frame_id = source_frame;
@@ -386,6 +345,7 @@ bool GNSSPoser::get_static_transform(
     transform_stamped_ptr->transform.rotation.w = 1.0;
     return false;
   }
+  *transform_stamped_ptr = *transform_opt;
   return true;
 }
 

@@ -57,10 +57,7 @@ autoware_planning_msgs::msg::Path to_path(
 }  // namespace
 
 BehaviorVelocityPlannerNode::BehaviorVelocityPlannerNode(const rclcpp::NodeOptions & node_options)
-: Node("behavior_velocity_planner_node", node_options),
-  tf_buffer_(this->get_clock()),
-  tf_listener_(tf_buffer_),
-  planner_data_(*this)
+: Node("behavior_velocity_planner_node", node_options), planner_data_(*this)
 {
   using std::placeholders::_1;
   using std::placeholders::_2;
@@ -140,19 +137,16 @@ void BehaviorVelocityPlannerNode::onParam()
 void BehaviorVelocityPlannerNode::processNoGroundPointCloud(
   const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg)
 {
-  geometry_msgs::msg::TransformStamped transform;
-  try {
-    transform = tf_buffer_.lookupTransform(
-      "map", msg->header.frame_id, msg->header.stamp, rclcpp::Duration::from_seconds(0.1));
-  } catch (tf2::TransformException & e) {
-    RCLCPP_WARN(get_logger(), "no transform found for no_ground_pointcloud: %s", e.what());
-    return;
-  }
+  auto transform_opt = managed_tf_buffer_.getTransform<geometry_msgs::msg::TransformStamped>(
+    "map", msg->header.frame_id, msg->header.stamp, rclcpp::Duration::from_seconds(0.1),
+    this->get_logger());
+
+  if (!transform_opt) return;
 
   pcl::PointCloud<pcl::PointXYZ> pc;
   pcl::fromROSMsg(*msg, pc);
 
-  Eigen::Affine3f affine = tf2::transformToEigen(transform.transform).cast<float>();
+  Eigen::Affine3f affine = tf2::transformToEigen(transform_opt->transform).cast<float>();
   pcl::PointCloud<pcl::PointXYZ>::Ptr pc_transformed(new pcl::PointCloud<pcl::PointXYZ>);
   if (!pc.empty()) {
     autoware::universe_utils::transformPointCloud(pc, *pc_transformed, affine);

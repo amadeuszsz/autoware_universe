@@ -30,14 +30,8 @@ Odometry::Odometry(
   rclcpp::Node & node, const std::string & world_frame_id, bool enable_odometry_uncertainty)
 : node_(node),
   world_frame_id_(world_frame_id),
-  tf_buffer_(node_.get_clock()),
-  tf_listener_(tf_buffer_),
   enable_odometry_uncertainty_(enable_odometry_uncertainty)
 {
-  // Create tf timer
-  auto cti = std::make_shared<tf2_ros::CreateTimerROS>(
-    node_.get_node_base_interface(), node_.get_node_timers_interface());
-  tf_buffer_.setCreateTimerInterface(cti);
 }
 
 void Odometry::updateTfCache(
@@ -72,29 +66,19 @@ std::optional<geometry_msgs::msg::Transform> Odometry::getTransform(const rclcpp
 std::optional<geometry_msgs::msg::Transform> Odometry::getTransform(
   const std::string & source_frame_id, const rclcpp::Time & time) const
 {
-  try {
-    // Check if the frames are ready
-    std::string errstr;  // This argument prevents error msg from being displayed in the terminal.
-    if (!tf_buffer_.canTransform(
-          world_frame_id_, source_frame_id, tf2::TimePointZero, tf2::Duration::zero(), &errstr)) {
-      return std::nullopt;
-    }
+  auto self_transform_stamped =
+    managed_tf_buffer_.getTransform<geometry_msgs::msg::TransformStamped>(
+      world_frame_id_, source_frame_id, time, rclcpp::Duration::from_seconds(0.5),
+      rclcpp::get_logger("multi_object_tracker"));
 
-    // Lookup the transform
-    geometry_msgs::msg::TransformStamped self_transform_stamped;
-    self_transform_stamped = tf_buffer_.lookupTransform(
-      world_frame_id_, source_frame_id, time, rclcpp::Duration::from_seconds(0.5));
+  if (!self_transform_stamped) return std::nullopt;
 
-    // update the cache
-    if (source_frame_id == ego_frame_id_) {
-      updateTfCache(time, self_transform_stamped.transform);
-    }
-
-    return std::optional<geometry_msgs::msg::Transform>(self_transform_stamped.transform);
-  } catch (tf2::TransformException & ex) {
-    RCLCPP_WARN_STREAM(rclcpp::get_logger("multi_object_tracker"), ex.what());
-    return std::nullopt;
+  // update the cache
+  if (source_frame_id == ego_frame_id_) {
+    updateTfCache(time, self_transform_stamped->transform);
   }
+
+  return std::optional<geometry_msgs::msg::Transform>(self_transform_stamped->transform);
 }
 
 std::optional<nav_msgs::msg::Odometry> Odometry::getOdometryFromTf(const rclcpp::Time & time) const

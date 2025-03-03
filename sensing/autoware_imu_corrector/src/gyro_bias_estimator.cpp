@@ -60,7 +60,7 @@ GyroBiasEstimator::GyroBiasEstimator(const rclcpp::NodeOptions & options)
     this->get_node_base_interface()->get_context());
   this->get_node_timers_interface()->add_timer(timer_, nullptr);
 
-  transform_listener_ = std::make_shared<autoware::universe_utils::TransformListener>(this);
+  managed_tf_buffer_ = std::make_shared<managed_transform_buffer::ManagedTransformBuffer>();
 
   // initialize diagnostics_info_
   {
@@ -78,18 +78,14 @@ GyroBiasEstimator::GyroBiasEstimator(const rclcpp::NodeOptions & options)
 void GyroBiasEstimator::callback_imu(const Imu::ConstSharedPtr imu_msg_ptr)
 {
   imu_frame_ = imu_msg_ptr->header.frame_id;
-  geometry_msgs::msg::TransformStamped::ConstSharedPtr tf_imu2base_ptr =
-    transform_listener_->getLatestTransform(imu_frame_, output_frame_);
-  if (!tf_imu2base_ptr) {
-    RCLCPP_ERROR(
-      this->get_logger(), "Please publish TF %s to %s", output_frame_.c_str(),
-      (imu_frame_).c_str());
-    return;
-  }
+  auto tf_imu2base_opt =
+    managed_tf_buffer_->getLatestTransform<geometry_msgs::msg::TransformStamped>(
+      imu_frame_, output_frame_, this->get_logger());
+  if (!tf_imu2base_opt) return;
 
   geometry_msgs::msg::Vector3Stamped gyro;
   gyro.header.stamp = imu_msg_ptr->header.stamp;
-  gyro.vector = transform_vector3(imu_msg_ptr->angular_velocity, *tf_imu2base_ptr);
+  gyro.vector = transform_vector3(imu_msg_ptr->angular_velocity, *tf_imu2base_opt);
 
   gyro_all_.push_back(gyro);
 
@@ -167,9 +163,10 @@ void GyroBiasEstimator::timer_callback()
   // Calculate gyro bias
   gyro_bias_estimation_module_->update_bias(pose_buf, gyro_filtered);
 
-  geometry_msgs::msg::TransformStamped::ConstSharedPtr tf_base2imu_ptr =
-    transform_listener_->getLatestTransform(output_frame_, imu_frame_);
-  if (!tf_base2imu_ptr) {
+  auto tf_base2imu_opt =
+    managed_tf_buffer_->getLatestTransform<geometry_msgs::msg::TransformStamped>(
+      output_frame_, imu_frame_, this->get_logger());
+  if (!tf_base2imu_opt) {
     RCLCPP_ERROR(
       this->get_logger(), "Please publish TF %s to %s", imu_frame_.c_str(), output_frame_.c_str());
 
@@ -178,7 +175,7 @@ void GyroBiasEstimator::timer_callback()
   }
 
   gyro_bias_ =
-    transform_vector3(gyro_bias_estimation_module_->get_bias_base_link(), *tf_base2imu_ptr);
+    transform_vector3(gyro_bias_estimation_module_->get_bias_base_link(), *tf_base2imu_opt);
 
   validate_gyro_bias();
 }

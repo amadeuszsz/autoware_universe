@@ -57,8 +57,6 @@
 #include <tier4_planning_msgs/msg/velocity_limit.hpp>
 
 #include <gtest/gtest.h>
-#include <tf2_ros/buffer.h>
-#include <tf2_ros/transform_listener.h>
 
 #include <ctime>
 #include <memory>
@@ -229,8 +227,6 @@ private:
 
   std::string map_frame_ = "map";
   size_t count_{0};
-  std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
-  std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
   void publishNominalTrajectory(rclcpp::Node::SharedPtr target_node, std::string topic_name);
   void publishAbnormalTrajectory(
     rclcpp::Node::SharedPtr target_node, const Trajectory & abnormal_trajectory);

@@ -53,7 +53,7 @@ GyroOdometerNode::GyroOdometerNode(const rclcpp::NodeOptions & node_options)
   vehicle_twist_arrived_(false),
   imu_arrived_(false)
 {
-  transform_listener_ = std::make_shared<autoware::universe_utils::TransformListener>(this);
+  managed_tf_buffer_ = std::make_shared<managed_transform_buffer::ManagedTransformBuffer>();
   logger_configure_ = std::make_unique<autoware::universe_utils::LoggerLevelConfigure>(this);
 
   vehicle_twist_sub_ = create_subscription<geometry_msgs::msg::TwistWithCovarianceStamped>(
@@ -177,10 +177,11 @@ void GyroOdometerNode::concat_gyro_and_odometer()
   }
 
   // get transformation
-  geometry_msgs::msg::TransformStamped::ConstSharedPtr tf_imu2base_ptr =
-    transform_listener_->getLatestTransform(gyro_queue_.front().header.frame_id, output_frame_);
+  auto tf_imu2base_opt =
+    managed_tf_buffer_->getLatestTransform<geometry_msgs::msg::TransformStamped>(
+      gyro_queue_.front().header.frame_id, output_frame_, this->get_logger());
 
-  const bool is_succeed_transform_imu = (tf_imu2base_ptr != nullptr);
+  const bool is_succeed_transform_imu = tf_imu2base_opt.has_value();
   diagnostics_->add_key_value("is_succeed_transform_imu", is_succeed_transform_imu);
   if (!is_succeed_transform_imu) {
     std::stringstream message;
@@ -202,8 +203,8 @@ void GyroOdometerNode::concat_gyro_and_odometer()
     angular_velocity.vector = gyro.angular_velocity;
 
     geometry_msgs::msg::Vector3Stamped transformed_angular_velocity;
-    transformed_angular_velocity.header = tf_imu2base_ptr->header;
-    tf2::doTransform(angular_velocity, transformed_angular_velocity, *tf_imu2base_ptr);
+    transformed_angular_velocity.header = tf_imu2base_opt->header;
+    tf2::doTransform(angular_velocity, transformed_angular_velocity, *tf_imu2base_opt);
 
     gyro.header.frame_id = output_frame_;
     gyro.angular_velocity = transformed_angular_velocity.vector;

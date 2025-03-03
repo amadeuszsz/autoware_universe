@@ -431,6 +431,9 @@ MapBasedPredictionNode::MapBasedPredictionNode(const rclcpp::NodeOptions & node_
   // initialize VRU predictor
   predictor_vru_ = std::make_unique<PredictorVru>(*this);
 
+  // initialize transform listener
+  managed_tf_buffer_ = std::make_shared<managed_transform_buffer::ManagedTransformBuffer>();
+
   // VRU parameters
   remember_lost_crosswalk_users_ =
     declare_parameter<bool>("use_crosswalk_user_history.remember_lost_users");
@@ -574,14 +577,15 @@ void MapBasedPredictionNode::objectsCallback(const TrackedObjects::ConstSharedPt
   }
 
   // get world to map transform
-  geometry_msgs::msg::TransformStamped::ConstSharedPtr world2map_transform;
+  std::optional<geometry_msgs::msg::TransformStamped> world2map_transform_opt;
   bool is_object_not_in_map_frame = in_objects->header.frame_id != "map";
   if (is_object_not_in_map_frame) {
-    world2map_transform = transform_listener_.getTransform(
-      "map",                        // target
-      in_objects->header.frame_id,  // src
-      in_objects->header.stamp, rclcpp::Duration::from_seconds(0.1));
-    if (!world2map_transform) return;
+    world2map_transform_opt =
+      managed_tf_buffer_->getTransform<geometry_msgs::msg::TransformStamped>(
+        "map",                        // target
+        in_objects->header.frame_id,  // src
+        in_objects->header.stamp, rclcpp::Duration::from_seconds(0.1), this->get_logger());
+    if (!world2map_transform_opt) return;
   }
 
   // Get objects detected time
@@ -614,7 +618,7 @@ void MapBasedPredictionNode::objectsCallback(const TrackedObjects::ConstSharedPt
       geometry_msgs::msg::PoseStamped pose_in_map;
       geometry_msgs::msg::PoseStamped pose_orig;
       pose_orig.pose = object.kinematics.pose_with_covariance.pose;
-      tf2::doTransform(pose_orig, pose_in_map, *world2map_transform);
+      tf2::doTransform(pose_orig, pose_in_map, *world2map_transform_opt);
       transformed_object.kinematics.pose_with_covariance.pose = pose_in_map.pose;
     }
 

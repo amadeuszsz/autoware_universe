@@ -18,8 +18,8 @@
 #include "autoware/universe_utils/ros/diagnostics_interface.hpp"
 #include "autoware/universe_utils/ros/logger_level_configure.hpp"
 #include "autoware/universe_utils/ros/msg_covariance.hpp"
-#include "autoware/universe_utils/ros/transform_listener.hpp"
 
+#include <managed_transform_buffer/managed_transform_buffer.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include <geometry_msgs/msg/twist_stamped.hpp>
@@ -67,7 +67,7 @@ private:
   rclcpp::Publisher<geometry_msgs::msg::TwistWithCovarianceStamped>::SharedPtr
     twist_with_covariance_pub_;
 
-  std::shared_ptr<autoware::universe_utils::TransformListener> transform_listener_;
+  std::shared_ptr<managed_transform_buffer::ManagedTransformBuffer> managed_tf_buffer_;
   std::unique_ptr<autoware::universe_utils::LoggerLevelConfigure> logger_configure_;
 
   std::string output_frame_;

@@ -15,13 +15,10 @@
 #define IMU_CORRECTOR_CORE_HPP_
 
 #include <autoware/universe_utils/ros/msg_covariance.hpp>
-#include <autoware/universe_utils/ros/transform_listener.hpp>
+#include <managed_transform_buffer/managed_transform_buffer.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include <sensor_msgs/msg/imu.hpp>
-
-#include <tf2_ros/buffer.h>
-#include <tf2_ros/transform_listener.h>
 
 #include <memory>
 #include <string>
@@ -52,7 +49,7 @@ private:
 
   double accel_stddev_imu_link_;
 
-  std::shared_ptr<autoware::universe_utils::TransformListener> transform_listener_;
+  std::shared_ptr<managed_transform_buffer::ManagedTransformBuffer> managed_tf_buffer_;
 
   std::string output_frame_;
 };

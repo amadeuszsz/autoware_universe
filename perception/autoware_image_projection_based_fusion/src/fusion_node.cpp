@@ -50,7 +50,7 @@ using autoware::universe_utils::ScopedTimeTrack;
 template <class Msg3D, class Msg2D, class ExportObj>
 FusionNode<Msg3D, Msg2D, ExportObj>::FusionNode(
   const std::string & node_name, const rclcpp::NodeOptions & options)
-: Node(node_name, options), tf_buffer_(this->get_clock()), tf_listener_(tf_buffer_)
+: Node(node_name, options)
 {
   // set rois_number
   const std::size_t rois_number =

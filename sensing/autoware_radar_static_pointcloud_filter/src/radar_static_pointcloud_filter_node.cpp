@@ -49,20 +49,19 @@ geometry_msgs::msg::Vector3 getVelocity(const radar_msgs::msg::RadarReturn & rad
 }
 
 geometry_msgs::msg::Vector3 getTransformedVelocity(
-  const geometry_msgs::msg::Vector3 velocity,
-  geometry_msgs::msg::TransformStamped::ConstSharedPtr transform)
+  const geometry_msgs::msg::Vector3 velocity, geometry_msgs::msg::TransformStamped & transform)
 {
   geometry_msgs::msg::Vector3Stamped velocity_stamped{};
   velocity_stamped.vector = velocity;
   geometry_msgs::msg::Vector3Stamped transformed_velocity_stamped{};
-  tf2::doTransform(velocity_stamped, transformed_velocity_stamped, *transform);
+  tf2::doTransform(velocity_stamped, transformed_velocity_stamped, transform);
   return velocity_stamped.vector;
 }
 
 geometry_msgs::msg::Vector3 compensateEgoVehicleTwist(
   const radar_msgs::msg::RadarReturn & radar,
   const geometry_msgs::msg::TwistWithCovariance & ego_vehicle_twist_with_covariance,
-  geometry_msgs::msg::TransformStamped::ConstSharedPtr transform)
+  geometry_msgs::msg::TransformStamped & transform)
 {
   const geometry_msgs::msg::Vector3 radar_velocity = getVelocity(radar);
   const geometry_msgs::msg::Vector3 v_r = getTransformedVelocity(radar_velocity, transform);
@@ -96,7 +95,7 @@ RadarStaticPointcloudFilterNode::RadarStaticPointcloudFilterNode(
   node_param_.doppler_velocity_sd = declare_parameter<double>("doppler_velocity_sd");
 
   // Subscriber
-  transform_listener_ = std::make_shared<autoware::universe_utils::TransformListener>(this);
+  managed_tf_buffer_ = std::make_shared<managed_transform_buffer::ManagedTransformBuffer>();
 
   sub_radar_.subscribe(this, "~/input/radar", rclcpp::QoS{1}.get_rmw_qos_profile());
   sub_odometry_.subscribe(this, "~/input/odometry", rclcpp::QoS{1}.get_rmw_qos_profile());
@@ -129,16 +128,10 @@ rcl_interfaces::msg::SetParametersResult RadarStaticPointcloudFilterNode::onSetP
 void RadarStaticPointcloudFilterNode::onData(
   const RadarScan::ConstSharedPtr radar_msg, const Odometry::ConstSharedPtr odom_msg)
 {
-  geometry_msgs::msg::TransformStamped::ConstSharedPtr transform;
-
-  try {
-    transform = transform_listener_->getTransform(
-      odom_msg->header.frame_id, radar_msg->header.frame_id, odom_msg->header.stamp,
-      rclcpp::Duration::from_seconds(0.2));
-  } catch (tf2::TransformException & ex) {
-    RCLCPP_INFO(this->get_logger(), "Could not transform");
-    return;
-  }
+  auto transform_opt = managed_tf_buffer_->getTransform<geometry_msgs::msg::TransformStamped>(
+    odom_msg->header.frame_id, radar_msg->header.frame_id, odom_msg->header.stamp,
+    rclcpp::Duration::from_seconds(0.2), this->get_logger());
+  if (!transform_opt) return;
 
   RadarScan static_radar{};
   RadarScan dynamic_radar{};
@@ -146,7 +139,7 @@ void RadarStaticPointcloudFilterNode::onData(
   dynamic_radar.header = radar_msg->header;
 
   for (const auto & radar_return : radar_msg->returns) {
-    if (isStaticPointcloud(radar_return, odom_msg, transform)) {
+    if (isStaticPointcloud(radar_return, odom_msg, *transform_opt)) {
       static_radar.returns.emplace_back(radar_return);
     } else {
       dynamic_radar.returns.emplace_back(radar_return);
@@ -158,7 +151,7 @@ void RadarStaticPointcloudFilterNode::onData(
 
 bool RadarStaticPointcloudFilterNode::isStaticPointcloud(
   const RadarReturn & radar_return, const Odometry::ConstSharedPtr & odom_msg,
-  geometry_msgs::msg::TransformStamped::ConstSharedPtr transform)
+  geometry_msgs::msg::TransformStamped & transform)
 {
   geometry_msgs::msg::Vector3 compensated_velocity =
     compensateEgoVehicleTwist(radar_return, odom_msg->twist, transform);

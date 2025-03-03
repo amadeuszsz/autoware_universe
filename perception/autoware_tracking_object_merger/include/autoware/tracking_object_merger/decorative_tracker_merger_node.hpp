@@ -33,8 +33,7 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #endif
 
-#include <tf2_ros/buffer.h>
-#include <tf2_ros/transform_listener.h>
+#include <managed_transform_buffer/managed_transform_buffer.hpp>
 
 #include <map>
 #include <memory>
@@ -78,8 +77,7 @@ private:
     const autoware_perception_msgs::msg::TrackedObject & input_object);
 
 private:
-  tf2_ros::Buffer tf_buffer_;
-  tf2_ros::TransformListener tf_listener_;
+  managed_transform_buffer::ManagedTransformBuffer managed_tf_buffer_;
   rclcpp::Publisher<autoware_perception_msgs::msg::TrackedObjects>::SharedPtr merged_object_pub_;
   rclcpp::Subscription<autoware_perception_msgs::msg::TrackedObjects>::SharedPtr sub_main_objects_;
   rclcpp::Subscription<autoware_perception_msgs::msg::TrackedObjects>::SharedPtr sub_sub_objects_;

@@ -45,7 +45,8 @@ public:
   virtual ~CenterPointTRT();
 
   bool detect(
-    const sensor_msgs::msg::PointCloud2 & input_pointcloud_msg, const tf2_ros::Buffer & tf_buffer,
+    const sensor_msgs::msg::PointCloud2 & input_pointcloud_msg,
+    managed_transform_buffer::ManagedTransformBuffer & managed_tf_buffer,
     std::vector<Box3D> & det_boxes3d, bool & is_num_pillars_within_range);
 
 protected:
@@ -53,7 +54,8 @@ protected:
   void initTrt(const TrtCommonConfig & encoder_param, const TrtCommonConfig & head_param);
 
   virtual bool preprocess(
-    const sensor_msgs::msg::PointCloud2 & input_pointcloud_msg, const tf2_ros::Buffer & tf_buffer);
+    const sensor_msgs::msg::PointCloud2 & input_pointcloud_msg,
+    managed_transform_buffer::ManagedTransformBuffer & managed_tf_buffer);
 
   void inference();
 

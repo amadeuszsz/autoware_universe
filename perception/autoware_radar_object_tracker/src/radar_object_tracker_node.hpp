@@ -41,8 +41,8 @@
 #else
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #endif
-#include <tf2_ros/buffer.h>
-#include <tf2_ros/transform_listener.h>
+
+#include <managed_transform_buffer/managed_transform_buffer.hpp>
 
 #include <list>
 #include <map>
@@ -70,8 +70,7 @@ private:
   rclcpp::TimerBase::SharedPtr publish_timer_;              // publish timer
   rclcpp::Subscription<LaneletMapBin>::SharedPtr sub_map_;  // map subscriber
 
-  tf2_ros::Buffer tf_buffer_;
-  tf2_ros::TransformListener tf_listener_;
+  managed_transform_buffer::ManagedTransformBuffer managed_tf_buffer_;
   float tracker_lifetime_;
   std::map<std::uint8_t, std::string> tracker_map_;
 

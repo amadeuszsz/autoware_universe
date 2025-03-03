@@ -48,8 +48,6 @@ using std::placeholders::_1;
 EKFLocalizer::EKFLocalizer(const rclcpp::NodeOptions & node_options)
 : rclcpp::Node("ekf_localizer", node_options),
   warning_(std::make_shared<Warning>(this)),
-  tf2_buffer_(this->get_clock()),
-  tf2_listener_(tf2_buffer_),
   params_(this),
   ekf_dt_(params_.ekf_dt),
   pose_queue_(params_.pose_smoothing_steps),
@@ -94,6 +92,8 @@ EKFLocalizer::EKFLocalizer(const rclcpp::NodeOptions & node_options)
 
   tf_br_ = std::make_shared<tf2_ros::TransformBroadcaster>(
     std::shared_ptr<rclcpp::Node>(this, [](auto) {}));
+
+  managed_tf_buffer_ = std::make_unique<managed_transform_buffer::ManagedTransformBuffer>();
 
   ekf_module_ = std::make_unique<EKFModule>(warning_, params_);
   logger_configure_ = std::make_unique<autoware::universe_utils::LoggerLevelConfigure>(this);
@@ -252,13 +252,14 @@ bool EKFLocalizer::get_transform_from_tf(
   parent_frame = erase_leading_slash(parent_frame);
   child_frame = erase_leading_slash(child_frame);
 
-  try {
-    transform = tf2_buffer_.lookupTransform(parent_frame, child_frame, tf2::TimePointZero);
-    return true;
-  } catch (tf2::TransformException & ex) {
-    warning_->warn(ex.what());
+  auto transform_opt = managed_tf_buffer_->getLatestTransform<geometry_msgs::msg::TransformStamped>(
+    parent_frame, child_frame, this->get_logger());
+  if (!transform_opt) {
+    warning_->warn("Transform lookup failed!");
+    return false;
   }
-  return false;
+  transform = *transform_opt;
+  return true;
 }
 
 /*
