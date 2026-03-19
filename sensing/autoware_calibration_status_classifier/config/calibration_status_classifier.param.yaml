@@ -20,7 +20,7 @@
       linear_velocity_check:
         enabled: true
         source: twist_with_cov_stamped
-        threshold: 3.0
+        threshold: 10.0
         timeout: 1.0
       angular_velocity_check:
         enabled: true

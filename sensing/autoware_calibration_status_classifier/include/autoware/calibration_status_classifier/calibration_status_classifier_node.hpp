@@ -24,6 +24,7 @@
 #include <autoware_utils/ros/diagnostics_interface.hpp>
 #include <rclcpp/rclcpp.hpp>
 
+#include <autoware_internal_debug_msgs/msg/float64_stamped.hpp>
 #include <autoware_perception_msgs/msg/detected_objects.hpp>
 #include <autoware_perception_msgs/msg/predicted_objects.hpp>
 #include <autoware_perception_msgs/msg/tracked_objects.hpp>
@@ -42,6 +43,8 @@
 
 #include <memory>
 #include <mutex>
+#include <limits>
+#include <string>
 #include <vector>
 
 namespace autoware::calibration_status_classifier
@@ -53,6 +56,29 @@ struct InputMetadata
   rclcpp::Time cloud_stamp;
   rclcpp::Time image_stamp;
   rclcpp::Time common_stamp;
+};
+
+struct MiscalibrationExperimentStep
+{
+  std::string axis_name;
+  double x_m;
+  double y_m;
+  double z_m;
+  double roll_deg;
+  double pitch_deg;
+  double yaw_deg;
+};
+
+struct MiscalibrationDebugPublishers
+{
+  rclcpp::Publisher<autoware_internal_debug_msgs::msg::Float64Stamped>::SharedPtr offset_x_pub;
+  rclcpp::Publisher<autoware_internal_debug_msgs::msg::Float64Stamped>::SharedPtr offset_y_pub;
+  rclcpp::Publisher<autoware_internal_debug_msgs::msg::Float64Stamped>::SharedPtr offset_z_pub;
+  rclcpp::Publisher<autoware_internal_debug_msgs::msg::Float64Stamped>::SharedPtr offset_roll_pub;
+  rclcpp::Publisher<autoware_internal_debug_msgs::msg::Float64Stamped>::SharedPtr offset_pitch_pub;
+  rclcpp::Publisher<autoware_internal_debug_msgs::msg::Float64Stamped>::SharedPtr offset_yaw_pub;
+  rclcpp::Publisher<autoware_internal_debug_msgs::msg::Float64Stamped>::SharedPtr
+    calibration_confidence_pub;
 };
 
 /**
@@ -88,6 +114,10 @@ private:
 
   std::vector<CameraLidarTopicsInfo> camera_lidar_in_out_info_;
   std::vector<CameraLidarInfo> camera_lidar_info_;
+  std::vector<CameraLidarInfo> original_camera_lidar_info_;
+  std::vector<MiscalibrationExperimentStep> miscalibration_experiment_steps_;
+  std::size_t miscalibration_experiment_step_idx_{0};
+  std::size_t logged_miscalibration_experiment_step_idx_{std::numeric_limits<std::size_t>::max()};
 
   // ROS interface
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr calibration_service_;
@@ -109,6 +139,7 @@ private:
     cloud_subs_;
   std::vector<std::shared_ptr<message_filters::Subscriber<sensor_msgs::msg::Image>>> image_subs_;
   std::vector<rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr> preview_image_pubs_;
+  std::vector<MiscalibrationDebugPublishers> miscalibration_debug_pubs_;
   using SyncPolicy = message_filters::sync_policies::ApproximateTime<
     sensor_msgs::msg::PointCloud2, sensor_msgs::msg::Image>;
   std::vector<std::shared_ptr<message_filters::Synchronizer<SyncPolicy>>> synchronizers_;
@@ -195,6 +226,15 @@ private:
   void publish_diagnostic_status(
     const InputMetadata & input_metadata, const size_t pair_idx,
     const CalibrationStatusClassifierResult & result = CalibrationStatusClassifierResult());
+
+  void initialize_miscalibration_experiment();
+  const MiscalibrationExperimentStep & get_current_miscalibration_experiment_step() const;
+  void maybe_log_current_miscalibration_experiment_step();
+  void advance_miscalibration_experiment_step();
+  CameraLidarInfo apply_miscalibration_experiment(const CameraLidarInfo & camera_lidar_info) const;
+  void publish_miscalibration_debug_topics(
+    std::size_t pair_idx, const rclcpp::Time & stamp,
+    const CalibrationStatusClassifierResult * result = nullptr);
 };
 
 }  // namespace autoware::calibration_status_classifier

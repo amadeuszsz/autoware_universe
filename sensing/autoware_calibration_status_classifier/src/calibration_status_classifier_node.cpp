@@ -20,6 +20,7 @@
 #include "autoware/calibration_status_classifier/ros_utils.hpp"
 
 #include <rclcpp/qos.hpp>
+#include <Eigen/Geometry>
 #include <tf2_eigen/tf2_eigen.hpp>
 
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
@@ -28,6 +29,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <functional>
 #include <memory>
 #include <stdexcept>
@@ -37,6 +39,25 @@
 
 namespace autoware::calibration_status_classifier
 {
+
+namespace
+{
+constexpr std::size_t kWarmupIterations = 10;
+constexpr std::size_t kSweepIterations = 40;
+constexpr double kTranslationMaxM = 0.4;
+constexpr double kRotationMaxDeg = 5.0;
+constexpr double kDegToRad = 3.14159265358979323846 / 180.0;
+
+void publish_float64_stamped(
+  const rclcpp::Publisher<autoware_internal_debug_msgs::msg::Float64Stamped>::SharedPtr & publisher,
+  const rclcpp::Time & stamp, const double value)
+{
+  autoware_internal_debug_msgs::msg::Float64Stamped msg{};
+  msg.stamp = stamp;
+  msg.data = value;
+  publisher->publish(msg);
+}
+}  // namespace
 
 CalibrationStatusClassifierNode::CalibrationStatusClassifierNode(
   const rclcpp::NodeOptions & options)
@@ -127,6 +148,8 @@ CalibrationStatusClassifierNode::CalibrationStatusClassifierNode(
   auto camera_lidar_info_collector =
     std::make_shared<CameraLidarInfoCollector>(this, camera_lidar_in_out_info_);
   camera_lidar_info_ = camera_lidar_info_collector->get_cameras_lidars_info();
+  original_camera_lidar_info_ = camera_lidar_info_;
+  initialize_miscalibration_experiment();
 
   setup_runtime_mode_interface();
 
@@ -286,6 +309,7 @@ void CalibrationStatusClassifierNode::setup_input_synchronization()
   cloud_subs_.resize(num_pairs);
   image_subs_.resize(num_pairs);
   preview_image_pubs_.resize(num_pairs);
+  miscalibration_debug_pubs_.resize(num_pairs);
   synchronizers_.resize(num_pairs);
   synchronized_data_.resize(num_pairs);
   diagnostics_interfaces_.resize(num_pairs);
@@ -298,6 +322,27 @@ void CalibrationStatusClassifierNode::setup_input_synchronization()
       this, camera_lidar_in_out_info_.at(i).camera_topic, rmw_qos_profile_sensor_data);
     preview_image_pubs_.at(i) = this->create_publisher<sensor_msgs::msg::Image>(
       camera_lidar_in_out_info_.at(i).projected_points_topic, rclcpp::SensorDataQoS());
+    miscalibration_debug_pubs_.at(i).offset_x_pub =
+      this->create_publisher<autoware_internal_debug_msgs::msg::Float64Stamped>(
+        "~/debug/pair_" + std::to_string(i) + "/offset_x_m", 1);
+    miscalibration_debug_pubs_.at(i).offset_y_pub =
+      this->create_publisher<autoware_internal_debug_msgs::msg::Float64Stamped>(
+        "~/debug/pair_" + std::to_string(i) + "/offset_y_m", 1);
+    miscalibration_debug_pubs_.at(i).offset_z_pub =
+      this->create_publisher<autoware_internal_debug_msgs::msg::Float64Stamped>(
+        "~/debug/pair_" + std::to_string(i) + "/offset_z_m", 1);
+    miscalibration_debug_pubs_.at(i).offset_roll_pub =
+      this->create_publisher<autoware_internal_debug_msgs::msg::Float64Stamped>(
+        "~/debug/pair_" + std::to_string(i) + "/offset_roll_deg", 1);
+    miscalibration_debug_pubs_.at(i).offset_pitch_pub =
+      this->create_publisher<autoware_internal_debug_msgs::msg::Float64Stamped>(
+        "~/debug/pair_" + std::to_string(i) + "/offset_pitch_deg", 1);
+    miscalibration_debug_pubs_.at(i).offset_yaw_pub =
+      this->create_publisher<autoware_internal_debug_msgs::msg::Float64Stamped>(
+        "~/debug/pair_" + std::to_string(i) + "/offset_yaw_deg", 1);
+    miscalibration_debug_pubs_.at(i).calibration_confidence_pub =
+      this->create_publisher<autoware_internal_debug_msgs::msg::Float64Stamped>(
+        "~/debug/pair_" + std::to_string(i) + "/calibration_score", 1);
 
     // Create synchronizer
     synchronizers_.at(i) = std::make_shared<message_filters::Synchronizer<SyncPolicy>>(
@@ -393,6 +438,9 @@ bool CalibrationStatusClassifierNode::run(std::size_t pair_idx)
     return true;
   }
 
+  maybe_log_current_miscalibration_experiment_step();
+  publish_miscalibration_debug_topics(pair_idx, common_stamp);
+
   // Prepare preview image message if subscribed
   auto preview_img_msg = std::make_shared<sensor_msgs::msg::Image>();
   uint8_t * preview_img_data = nullptr;
@@ -410,10 +458,14 @@ bool CalibrationStatusClassifierNode::run(std::size_t pair_idx)
     preview_img_data = preview_img_msg->data.data();
   }
 
+  const auto experiment_camera_lidar_info =
+    apply_miscalibration_experiment(original_camera_lidar_info_.at(pair_idx));
   auto result = calibration_status_classifier_->process(
-    cloud_msg, image_msg, camera_lidar_info_.at(pair_idx), preview_img_data);
+    cloud_msg, image_msg, experiment_camera_lidar_info, preview_img_data);
 
   publish_diagnostic_status(input_metadata, pair_idx, result);
+  publish_miscalibration_debug_topics(pair_idx, common_stamp, &result);
+  advance_miscalibration_experiment_step();
 
   if (is_preview_subscribed) {
     preview_image_pubs_.at(pair_idx)->publish(*preview_img_msg);
@@ -487,6 +539,120 @@ void CalibrationStatusClassifierNode::publish_diagnostic_status(
     "Number of points projected", result.num_points_projected);
 
   diagnostics_interfaces_.at(pair_idx)->publish(now);
+}
+
+void CalibrationStatusClassifierNode::initialize_miscalibration_experiment()
+{
+  miscalibration_experiment_steps_.clear();
+  miscalibration_experiment_steps_.reserve(
+    kWarmupIterations + (6 * kSweepIterations) + 1);
+
+  for (std::size_t i = 0; i < kWarmupIterations; ++i) {
+    miscalibration_experiment_steps_.push_back({"warmup", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
+  }
+
+  const auto append_translation_axis = [this](const std::string & axis_name, const int axis_idx) {
+    for (std::size_t i = 0; i < kSweepIterations; ++i) {
+      MiscalibrationExperimentStep step{axis_name, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+      const double value =
+        (kSweepIterations > 1)
+          ? (static_cast<double>(i) * kTranslationMaxM / static_cast<double>(kSweepIterations - 1))
+          : 0.0;
+      if (axis_idx == 0) step.x_m = value;
+      if (axis_idx == 1) step.y_m = value;
+      if (axis_idx == 2) step.z_m = value;
+      miscalibration_experiment_steps_.push_back(step);
+    }
+  };
+
+  const auto append_rotation_axis = [this](const std::string & axis_name, const int axis_idx) {
+    for (std::size_t i = 0; i < kSweepIterations; ++i) {
+      MiscalibrationExperimentStep step{axis_name, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+      const double value =
+        (kSweepIterations > 1)
+          ? (static_cast<double>(i) * kRotationMaxDeg / static_cast<double>(kSweepIterations - 1))
+          : 0.0;
+      if (axis_idx == 0) step.roll_deg = value;
+      if (axis_idx == 1) step.pitch_deg = value;
+      if (axis_idx == 2) step.yaw_deg = value;
+      miscalibration_experiment_steps_.push_back(step);
+    }
+  };
+
+  append_translation_axis("x", 0);
+  append_translation_axis("y", 1);
+  append_translation_axis("z", 2);
+  append_rotation_axis("roll", 0);
+  append_rotation_axis("pitch", 1);
+  append_rotation_axis("yaw", 2);
+
+  miscalibration_experiment_steps_.push_back({"done", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
+}
+
+const MiscalibrationExperimentStep &
+CalibrationStatusClassifierNode::get_current_miscalibration_experiment_step() const
+{
+  return miscalibration_experiment_steps_.at(miscalibration_experiment_step_idx_);
+}
+
+void CalibrationStatusClassifierNode::maybe_log_current_miscalibration_experiment_step()
+{
+  if (logged_miscalibration_experiment_step_idx_ == miscalibration_experiment_step_idx_) {
+    return;
+  }
+
+  const auto & step = get_current_miscalibration_experiment_step();
+  RCLCPP_INFO(
+    this->get_logger(),
+    "Miscalibration experiment iteration %zu/%zu axis=%s offset: x=%.3f m y=%.3f m z=%.3f m "
+    "roll=%.2f deg pitch=%.2f deg yaw=%.2f deg",
+    miscalibration_experiment_step_idx_ + 1, miscalibration_experiment_steps_.size(),
+    step.axis_name.c_str(), step.x_m, step.y_m, step.z_m, step.roll_deg, step.pitch_deg,
+    step.yaw_deg);
+  logged_miscalibration_experiment_step_idx_ = miscalibration_experiment_step_idx_;
+}
+
+void CalibrationStatusClassifierNode::advance_miscalibration_experiment_step()
+{
+  if (miscalibration_experiment_step_idx_ + 1 < miscalibration_experiment_steps_.size()) {
+    ++miscalibration_experiment_step_idx_;
+  }
+}
+
+CameraLidarInfo CalibrationStatusClassifierNode::apply_miscalibration_experiment(
+  const CameraLidarInfo & camera_lidar_info) const
+{
+  const auto & step = get_current_miscalibration_experiment_step();
+  CameraLidarInfo miscalibrated_camera_lidar_info = camera_lidar_info;
+
+  const Eigen::Affine3d perturbation =
+    Eigen::Translation3d(step.x_m, step.y_m, step.z_m) *
+    Eigen::AngleAxisd(step.yaw_deg * kDegToRad, Eigen::Vector3d::UnitZ()) *
+    Eigen::AngleAxisd(step.pitch_deg * kDegToRad, Eigen::Vector3d::UnitY()) *
+    Eigen::AngleAxisd(step.roll_deg * kDegToRad, Eigen::Vector3d::UnitX());
+
+  const Eigen::Matrix4d perturbed_tf =
+    perturbation.matrix() * Eigen::Matrix4d(camera_lidar_info.tf_camera_to_lidar);
+  miscalibrated_camera_lidar_info.tf_camera_to_lidar =
+    Eigen::Matrix<double, 4, 4, Eigen::RowMajor>(perturbed_tf);
+  return miscalibrated_camera_lidar_info;
+}
+
+void CalibrationStatusClassifierNode::publish_miscalibration_debug_topics(
+  std::size_t pair_idx, const rclcpp::Time & stamp, const CalibrationStatusClassifierResult * result)
+{
+  const auto & step = get_current_miscalibration_experiment_step();
+  const auto & publishers = miscalibration_debug_pubs_.at(pair_idx);
+  publish_float64_stamped(publishers.offset_x_pub, stamp, step.x_m);
+  publish_float64_stamped(publishers.offset_y_pub, stamp, step.y_m);
+  publish_float64_stamped(publishers.offset_z_pub, stamp, step.z_m);
+  publish_float64_stamped(publishers.offset_roll_pub, stamp, step.roll_deg);
+  publish_float64_stamped(publishers.offset_pitch_pub, stamp, step.pitch_deg);
+  publish_float64_stamped(publishers.offset_yaw_pub, stamp, step.yaw_deg);
+  if (result != nullptr) {
+    publish_float64_stamped(
+      publishers.calibration_confidence_pub, stamp, result->calibration_confidence - result->miscalibration_confidence);
+  }
 }
 
 }  // namespace autoware::calibration_status_classifier
