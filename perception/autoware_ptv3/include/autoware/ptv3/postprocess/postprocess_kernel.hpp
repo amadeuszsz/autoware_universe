@@ -50,6 +50,7 @@ private:
   PTv3Config config_;
 
   CudaUniquePtr<std::uint32_t[]> ground_mask_d_{nullptr};
+  CudaUniquePtr<std::uint32_t[]> ground_indices_d_{nullptr};
   CudaUniquePtr<float[]> color_map_d_{nullptr};
   cudaStream_t stream_;
 };

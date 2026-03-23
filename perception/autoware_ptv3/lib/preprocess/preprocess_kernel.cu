@@ -99,7 +99,7 @@ __global__ void points2FeaturesKernel(
   output_point.x = input_point.x;
   output_point.y = input_point.y;
   output_point.z = input_point.z;
-  output_point.w = static_cast<float>(input_point.intensity) / 255.f;
+  output_point.w = 0.0f;
 }
 
 __global__ void cropKernel(
@@ -187,9 +187,10 @@ __global__ void voxelizationHash32Kernel(
 }
 
 __global__ void computeGridCoordsAndSerializationKernel(
-  const float4 * __restrict__ points, longlong3 * __restrict__ coords,
-  std::int64_t * __restrict__ hashes, int num_points, float voxel_size_x, float voxel_size_y,
-  float voxel_size_z, std::int32_t min_x, std::int32_t min_y, std::int32_t min_z, int depth)
+  const float4 * __restrict__ points, float * __restrict__ voxel_features,
+  longlong3 * __restrict__ coords, std::int64_t * __restrict__ hashes, int num_points,
+  float voxel_size_x, float voxel_size_y, float voxel_size_z, std::int32_t min_x,
+  std::int32_t min_y, std::int32_t min_z, int depth)
 {
   static_assert(sizeof(longlong3) == sizeof(std::uint64_t) * 3, "longlong3 must be 24 bytes");
   auto idx = static_cast<std::uint32_t>(blockIdx.x * blockDim.x + threadIdx.x);
@@ -203,6 +204,19 @@ __global__ void computeGridCoordsAndSerializationKernel(
   const std::int64_t z = static_cast<std::int32_t>(std::floor(point.z / voxel_size_z) - min_z);
 
   coords[idx] = make_longlong3(x, y, z);
+
+  // Write 9-float feat: [x, y, z, 0, 0, 0, 0, 0, 0]
+  constexpr int kFeatDim = 9;
+  float * output_feat = &voxel_features[kFeatDim * idx];
+  output_feat[0] = point.x;
+  output_feat[1] = point.y;
+  output_feat[2] = point.z;
+  output_feat[3] = 0.0f;
+  output_feat[4] = 0.0f;
+  output_feat[5] = 0.0f;
+  output_feat[6] = 0.0f;
+  output_feat[7] = 0.0f;
+  output_feat[8] = 0.0f;
 
   std::int64_t key1 = 0;
   std::int64_t key2 = 0;
@@ -316,7 +330,7 @@ std::size_t PreprocessCuda::generateFeatures(
     extractIndicesKernel<<<num_cropped_blocks, config_.threads_per_block_, 0, stream_>>>(
       reinterpret_cast<float4 *>(cropped_points_d_.get()), unique_mask64_d_.get(),
       unique_indices64_d_.get(), sorted_hash_indexes64_d_.get(),
-      reinterpret_cast<float4 *>(voxel_features), num_cropped_points);
+      reinterpret_cast<float4 *>(points_d_.get()), num_cropped_points);
 
   } else {
     voxelizationHash32Kernel<<<num_cropped_blocks, config_.threads_per_block_, 0, stream_>>>(
@@ -355,14 +369,15 @@ std::size_t PreprocessCuda::generateFeatures(
     extractIndicesKernel<<<num_cropped_blocks, config_.threads_per_block_, 0, stream_>>>(
       reinterpret_cast<float4 *>(cropped_points_d_.get()), unique_mask32_d_.get(),
       unique_indices32_d_.get(), sorted_hash_indexes32_d_.get(),
-      reinterpret_cast<float4 *>(voxel_features), num_cropped_points);
+      reinterpret_cast<float4 *>(points_d_.get()), num_cropped_points);
   }
 
   computeGridCoordsAndSerializationKernel<<<
     num_cropped_blocks, config_.threads_per_block_, 0, stream_>>>(
-    reinterpret_cast<float4 *>(voxel_features), reinterpret_cast<longlong3 *>(voxel_coords),
-    voxel_hashes, num_unique_points, config_.voxel_x_size_, config_.voxel_y_size_,
-    config_.voxel_z_size_, min_x, min_y, min_z, config_.serialization_depth_);
+    reinterpret_cast<float4 *>(points_d_.get()), voxel_features,
+    reinterpret_cast<longlong3 *>(voxel_coords), voxel_hashes, num_unique_points,
+    config_.voxel_x_size_, config_.voxel_y_size_, config_.voxel_z_size_, min_x, min_y, min_z,
+    config_.serialization_depth_);
 
   return num_unique_points;
 }

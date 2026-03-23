@@ -119,7 +119,7 @@ PTv3TRT::~PTv3TRT()
 void PTv3TRT::initPtr()
 {
   grid_coord_d_ = autoware::cuda_utils::make_unique<std::int64_t[]>(config_.max_num_voxels_ * 3);
-  feat_d_ = autoware::cuda_utils::make_unique<float[]>(config_.max_num_voxels_ * 4);
+  feat_d_ = autoware::cuda_utils::make_unique<float[]>(config_.max_num_voxels_ * 9);
   serialized_code_d_ =
     autoware::cuda_utils::make_unique<std::int64_t[]>(config_.max_num_voxels_ * 2);
   pred_labels_d_ = autoware::cuda_utils::make_unique<std::int64_t[]>(config_.max_num_voxels_);
@@ -185,7 +185,7 @@ void PTv3TRT::initTrt(const tensorrt_common::TrtCommonConfig & trt_config)
 
   // Inputs
   network_io.emplace_back("grid_coord", nvinfer1::Dims{2, {-1, 3}});
-  network_io.emplace_back("feat", nvinfer1::Dims{2, {-1, 4}});
+  network_io.emplace_back("feat", nvinfer1::Dims{2, {-1, 9}});
   network_io.emplace_back("serialized_code", nvinfer1::Dims{2, {2, -1}});
 
   // Outputs
@@ -200,8 +200,8 @@ void PTv3TRT::initTrt(const tensorrt_common::TrtCommonConfig & trt_config)
     nvinfer1::Dims{2, {config_.voxels_num_[1], 3}}, nvinfer1::Dims{2, {config_.voxels_num_[2], 3}});
 
   profile_dims.emplace_back(
-    "feat", nvinfer1::Dims{2, {config_.voxels_num_[0], 4}},
-    nvinfer1::Dims{2, {config_.voxels_num_[1], 4}}, nvinfer1::Dims{2, {config_.voxels_num_[2], 4}});
+    "feat", nvinfer1::Dims{2, {config_.voxels_num_[0], 9}},
+    nvinfer1::Dims{2, {config_.voxels_num_[1], 9}}, nvinfer1::Dims{2, {config_.voxels_num_[2], 9}});
 
   profile_dims.emplace_back(
     "serialized_code", nvinfer1::Dims{2, {2, config_.voxels_num_[0]}},
@@ -293,7 +293,7 @@ bool PTv3TRT::preProcess(const std::shared_ptr<const cuda_blackboard::CudaPointC
   }
 
   network_trt_ptr_->setInputShape("grid_coord", nvinfer1::Dims{2, {num_voxels_, 3}});
-  network_trt_ptr_->setInputShape("feat", nvinfer1::Dims{2, {num_voxels_, 4}});
+  network_trt_ptr_->setInputShape("feat", nvinfer1::Dims{2, {num_voxels_, 9}});
   network_trt_ptr_->setInputShape("serialized_code", nvinfer1::Dims{2, {2, num_voxels_}});
 
   return true;
