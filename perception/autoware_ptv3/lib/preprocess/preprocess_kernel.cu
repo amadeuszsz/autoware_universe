@@ -43,6 +43,7 @@ PreprocessCuda::PreprocessCuda(const PTv3Config & config, cudaStream_t stream)
     config_.cloud_capacity_ * sizeof(CloudPointTypeXYZIRCAEDT));
   crop_mask_d_ = autoware::cuda_utils::make_unique<std::uint32_t[]>(config_.cloud_capacity_);
   crop_indices_d_ = autoware::cuda_utils::make_unique<std::uint32_t[]>(config_.cloud_capacity_);
+  point_to_voxel_d_ = autoware::cuda_utils::make_unique<std::uint32_t[]>(config_.cloud_capacity_);
 
   auto policy = thrust::cuda::par.on(stream_);
 
@@ -262,6 +263,19 @@ __global__ void computeGridCoordsAndSerializationKernel(
   hashes[idx + num_points] = key2;
 }
 
+template <typename IndexT>
+__global__ void buildPointToVoxelMapKernel(
+  const IndexT * sorted_hash_indexes, const IndexT * unique_indices,
+  std::uint32_t * point_to_voxel, std::uint32_t num_cropped_points)
+{
+  const auto j = static_cast<std::uint32_t>(blockIdx.x * blockDim.x + threadIdx.x);
+  if (j >= num_cropped_points) {
+    return;
+  }
+  point_to_voxel[static_cast<std::uint32_t>(sorted_hash_indexes[j])] =
+    static_cast<std::uint32_t>(unique_indices[j]) - 1u;
+}
+
 std::size_t PreprocessCuda::generateFeatures(
   const void * input_data, CloudFormat input_format, unsigned int num_points,
   float * voxel_features, std::int64_t * voxel_coords, std::int64_t * voxel_hashes,
@@ -401,6 +415,11 @@ std::size_t PreprocessCuda::generateFeatures(
       policy, unique_mask64_d_.get(), unique_mask64_d_.get() + num_cropped_points,
       unique_indices64_d_.get());
 
+    buildPointToVoxelMapKernel<std::uint64_t>
+      <<<num_cropped_blocks, config_.threads_per_block_, 0, stream_>>>(
+        sorted_hash_indexes64_d_.get(), unique_indices64_d_.get(), point_to_voxel_d_.get(),
+        num_cropped_points);
+
     cudaMemcpyAsync(
       &num_unique_points, unique_indices64_d_.get() + num_cropped_points - 1, sizeof(std::int64_t),
       cudaMemcpyDeviceToHost, stream_);
@@ -464,6 +483,11 @@ std::size_t PreprocessCuda::generateFeatures(
     thrust::inclusive_scan(
       policy, unique_mask32_d_.get(), unique_mask32_d_.get() + num_cropped_points,
       unique_indices32_d_.get());
+
+    buildPointToVoxelMapKernel<std::uint32_t>
+      <<<num_cropped_blocks, config_.threads_per_block_, 0, stream_>>>(
+        sorted_hash_indexes32_d_.get(), unique_indices32_d_.get(), point_to_voxel_d_.get(),
+        num_cropped_points);
 
     std::uint32_t num_unique_points32;
     cudaMemcpyAsync(

@@ -72,7 +72,7 @@ public:
   /**
    * @brief Run full pipeline: copy input, preprocess, inference, postprocess; fill output clouds.
    * @param cloud_in Input point cloud (GPU)
-   * @param cloud_seg_out Segmentation output (x,y,z,class_id,probability); size set by pipeline
+   * @param cloud_seg_out Segmentation output (x,y,z,probabilities); size set by pipeline
    * @param cloud_viz_out Visualization output (x,y,z,rgb); size set by pipeline
    * @param cloud_filtered Filtered point cloud (filtered_output_format); width/row_step set by
    * pipeline
@@ -99,8 +99,9 @@ private:
   bool inference();
   /** Fill seg/viz/filtered clouds from network output; set cloud width/row_step. */
   bool postprocess(
-    const uint32_t num_points, const uint32_t num_points_raw, CloudFormat filtered_output_format,
-    const utils::ActiveComm & active_comm, cuda_blackboard::CudaPointCloud2 & cloud_seg_out,
+    const uint32_t num_points, const uint32_t num_points_raw, const uint32_t input_num_points,
+    CloudFormat filtered_output_format, const utils::ActiveComm & active_comm,
+    cuda_blackboard::CudaPointCloud2 & cloud_seg_out,
     cuda_blackboard::CudaPointCloud2 & cloud_viz_out,
     cuda_blackboard::CudaPointCloud2 & cloud_filtered);
   /** Allocate all GPU buffers to max profile sizes (called once in constructor). */
@@ -140,10 +141,11 @@ private:
   CudaUniquePtr<uint32_t[]> num_points_d_{nullptr};
   CudaUniquePtr<uint32_t[]> proj_idxs_d_{nullptr};
   CudaUniquePtr<uint64_t[]> proj_2d_d_{nullptr};
-  CudaUniquePtr<OutputSegmentationPointType[]> seg_data_d_{nullptr};
+  CudaUniquePtr<std::uint8_t[]> seg_data_d_{nullptr};
   CudaUniquePtr<OutputVisualizationPointType[]> viz_data_d_{nullptr};
   CudaUniquePtr<std::uint8_t[]> cloud_filtered_d_{nullptr};
   CudaUniquePtr<uint32_t[]> num_points_filtered_d_{nullptr};
+  CudaUniquePtr<uint32_t[]> input_to_compact_map_d_{nullptr};  // input_idx -> compact_idx map
 };
 
 }  // namespace autoware::lidar_frnet

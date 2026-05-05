@@ -199,7 +199,8 @@ template <typename PointT>
 __global__ void projectPoints_kernel(
   const PointT * cloud, const uint32_t num_points, uint32_t * output_num_points,
   float * output_points, int64_t * output_coors, int64_t * output_coors_keys,
-  uint32_t * output_proj_idxs, uint64_t * output_proj_2d, PointT * output_cloud_compact)
+  uint32_t * output_proj_idxs, uint64_t * output_proj_2d, PointT * output_cloud_compact,
+  uint32_t * output_input_to_compact_map)
 {
   uint32_t point_idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (point_idx >= num_points) return;
@@ -223,11 +224,15 @@ __global__ void projectPoints_kernel(
       p_ref_x > const_crop_box_bounds[0] && p_ref_x < const_crop_box_bounds[3] &&
       p_ref_y > const_crop_box_bounds[1] && p_ref_y < const_crop_box_bounds[4] &&
       p_ref_z > const_crop_box_bounds[2] && p_ref_z < const_crop_box_bounds[5]) {
-      return;
+      return;  // cropped: map entry stays UINT32_MAX (pre-initialized by caller)
     }
   }
 
   const uint32_t append_idx = atomicAdd(output_num_points, 1);
+
+  if (output_input_to_compact_map != nullptr) {
+    output_input_to_compact_map[point_idx] = append_idx;
+  }
   const float intensity = get_intensity(point);
   const auto proj_point = project2d(point3d, const_interpolation.w, const_interpolation.h);
   const auto proj_coor = project2d(point3d, const_frustum.w, const_frustum.h);
@@ -265,14 +270,16 @@ template <typename PointT>
 cudaError_t PreprocessCuda::projectPoints_launch_impl(
   const PointT * cloud, const uint32_t num_points, uint32_t * output_num_points,
   float * output_points, int64_t * output_coors, int64_t * output_coors_keys,
-  uint32_t * output_proj_idxs, uint64_t * output_proj_2d, void * output_cloud_compact)
+  uint32_t * output_proj_idxs, uint64_t * output_proj_2d, void * output_cloud_compact,
+  uint32_t * output_input_to_compact_map)
 {
   dim3 block(utils::divup(num_points, utils::kernel_1d_size));
   dim3 threads(utils::kernel_1d_size);
 
   projectPoints_kernel<<<block, threads, 0, stream_>>>(
     cloud, num_points, output_num_points, output_points, output_coors, output_coors_keys,
-    output_proj_idxs, output_proj_2d, static_cast<PointT *>(output_cloud_compact));
+    output_proj_idxs, output_proj_2d, static_cast<PointT *>(output_cloud_compact),
+    output_input_to_compact_map);
 
   return cudaGetLastError();
 }
@@ -280,16 +287,16 @@ cudaError_t PreprocessCuda::projectPoints_launch_impl(
 // Explicit instantiations
 template cudaError_t PreprocessCuda::projectPoints_launch_impl<CloudPointTypeXYZI>(
   const CloudPointTypeXYZI *, const uint32_t, uint32_t *, float *, int64_t *, int64_t *, uint32_t *,
-  uint64_t *, void *);
+  uint64_t *, void *, uint32_t *);
 template cudaError_t PreprocessCuda::projectPoints_launch_impl<CloudPointTypeXYZIRC>(
   const CloudPointTypeXYZIRC *, const uint32_t, uint32_t *, float *, int64_t *, int64_t *,
-  uint32_t *, uint64_t *, void *);
+  uint32_t *, uint64_t *, void *, uint32_t *);
 template cudaError_t PreprocessCuda::projectPoints_launch_impl<CloudPointTypeXYZIRADRT>(
   const CloudPointTypeXYZIRADRT *, const uint32_t, uint32_t *, float *, int64_t *, int64_t *,
-  uint32_t *, uint64_t *, void *);
+  uint32_t *, uint64_t *, void *, uint32_t *);
 template cudaError_t PreprocessCuda::projectPoints_launch_impl<CloudPointTypeXYZIRCAEDT>(
   const CloudPointTypeXYZIRCAEDT *, const uint32_t, uint32_t *, float *, int64_t *, int64_t *,
-  uint32_t *, uint64_t *, void *);
+  uint32_t *, uint64_t *, void *, uint32_t *);
 
 /**
  * @brief Dispatch projectPoints by input format to templated implementation.
@@ -297,29 +304,30 @@ template cudaError_t PreprocessCuda::projectPoints_launch_impl<CloudPointTypeXYZ
 cudaError_t PreprocessCuda::projectPoints_launch(
   const void * cloud, const uint32_t num_points, CloudFormat format, uint32_t * output_num_points,
   float * output_points, int64_t * output_coors, int64_t * output_coors_keys,
-  uint32_t * output_proj_idxs, uint64_t * output_proj_2d, void * output_cloud_compact)
+  uint32_t * output_proj_idxs, uint64_t * output_proj_2d, void * output_cloud_compact,
+  uint32_t * output_input_to_compact_map)
 {
   switch (format) {
     case CloudFormat::XYZIRCAEDT:
       return projectPoints_launch_impl(
         static_cast<const CloudPointTypeXYZIRCAEDT *>(cloud), num_points, output_num_points,
         output_points, output_coors, output_coors_keys, output_proj_idxs, output_proj_2d,
-        output_cloud_compact);
+        output_cloud_compact, output_input_to_compact_map);
     case CloudFormat::XYZIRADRT:
       return projectPoints_launch_impl(
         static_cast<const CloudPointTypeXYZIRADRT *>(cloud), num_points, output_num_points,
         output_points, output_coors, output_coors_keys, output_proj_idxs, output_proj_2d,
-        output_cloud_compact);
+        output_cloud_compact, output_input_to_compact_map);
     case CloudFormat::XYZIRC:
       return projectPoints_launch_impl(
         static_cast<const CloudPointTypeXYZIRC *>(cloud), num_points, output_num_points,
         output_points, output_coors, output_coors_keys, output_proj_idxs, output_proj_2d,
-        output_cloud_compact);
+        output_cloud_compact, output_input_to_compact_map);
     case CloudFormat::XYZI:
       return projectPoints_launch_impl(
         static_cast<const CloudPointTypeXYZI *>(cloud), num_points, output_num_points,
         output_points, output_coors, output_coors_keys, output_proj_idxs, output_proj_2d,
-        output_cloud_compact);
+        output_cloud_compact, output_input_to_compact_map);
     default:
       return cudaErrorInvalidValue;
   }

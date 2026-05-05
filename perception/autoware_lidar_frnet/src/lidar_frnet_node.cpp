@@ -44,6 +44,7 @@ namespace autoware::lidar_frnet
 LidarFRNetNode::LidarFRNetNode(const rclcpp::NodeOptions & options) : Node("lidar_frnet", options)
 {
   auto class_names = declare_parameter<std::vector<std::string>>("class_names");
+  cloud_seg_layout_ = ros_utils::generateSegmentationPointCloudLayout(class_names.size());
   auto trt_config = TrtCommonConfig(
     declare_parameter<std::string>("onnx_path"), declare_parameter<std::string>("trt_precision"));
   // Parse crop box

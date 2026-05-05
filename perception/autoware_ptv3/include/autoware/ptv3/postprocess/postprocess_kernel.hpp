@@ -41,6 +41,12 @@ public:
     const float * input_features, const std::int64_t * pred_labels, const float * pred_probs,
     std::uint8_t * output_points, std::size_t num_classes, std::size_t num_points);
 
+  void createSegmentationPointcloudBackProjected(
+    const float * all_points, const std::uint32_t * crop_mask,
+    const std::uint32_t * crop_indices, const std::uint32_t * point_to_voxel,
+    const float * pred_probs, std::uint8_t * output_points, std::size_t num_classes,
+    std::size_t num_input_points);
+
   std::size_t createFilteredPointcloud(
     const void * compact_input_points, CloudFormat input_format, CloudFormat output_format,
     const float * pred_probs, void * output_points, std::size_t num_classes,

@@ -96,7 +96,8 @@ public:
   cudaError_t projectPoints_launch(
     const void * cloud, const uint32_t num_points, CloudFormat format, uint32_t * output_num_points,
     float * output_points, int64_t * output_coors, int64_t * output_coors_keys,
-    uint32_t * output_proj_idxs, uint64_t * output_proj_2d, void * output_cloud_compact = nullptr);
+    uint32_t * output_proj_idxs, uint64_t * output_proj_2d, void * output_cloud_compact = nullptr,
+    uint32_t * output_input_to_compact_map = nullptr);
 
   /**
    * @brief Interpolate empty pixels from neighbors; append interpolated points and update coors.
@@ -118,7 +119,8 @@ private:
   cudaError_t projectPoints_launch_impl(
     const PointT * cloud, const uint32_t num_points, uint32_t * output_num_points,
     float * output_points, int64_t * output_coors, int64_t * output_coors_keys,
-    uint32_t * output_proj_idxs, uint64_t * output_proj_2d, void * output_cloud_compact);
+    uint32_t * output_proj_idxs, uint64_t * output_proj_2d, void * output_cloud_compact,
+    uint32_t * output_input_to_compact_map);
 
   const utils::Dims2d interpolation_;
   cudaStream_t stream_;

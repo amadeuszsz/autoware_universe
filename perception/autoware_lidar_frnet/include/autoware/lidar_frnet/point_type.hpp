@@ -183,15 +183,13 @@ inline std::size_t get_num_fields(CloudFormat format)
 }
 
 /**
- * @brief Output point type for segmentation cloud (x, y, z, class_id, probability).
+ * @brief Output point type for segmentation cloud fixed prefix (x, y, z).
  */
 struct OutputSegmentationPointType
 {
   float x;
   float y;
   float z;
-  std::uint8_t class_id;
-  float probability;
 } __attribute__((packed));
 
 /**

@@ -8,9 +8,9 @@
       output_format: ""
       ego_crop_box:
         reference_frame: base_link
-        min_x: -1.53
-        min_y: -1.15
-        min_z: -0.1
-        max_x: 6.1
-        max_y: 1.15
-        max_z: 3.1
+        min_x: 0.0
+        min_y: 0.0
+        min_z: 0.0
+        max_x: 0.0
+        max_y: 0.0
+        max_z: 0.0

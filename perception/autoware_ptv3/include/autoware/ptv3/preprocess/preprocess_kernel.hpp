@@ -37,6 +37,11 @@ public:
     float * voxel_features, std::int64_t * voxel_coords, std::int64_t * voxel_hashes,
     void * compact_points);
 
+  const float * getPoints() const { return points_d_.get(); }
+  const std::uint32_t * getCropMask() const { return crop_mask_d_.get(); }
+  const std::uint32_t * getCropIndices() const { return crop_indices_d_.get(); }
+  const std::uint32_t * getPointToVoxel() const { return point_to_voxel_d_.get(); }
+
 private:
   PTv3Config config_;
   cudaStream_t stream_;
@@ -60,6 +65,8 @@ private:
   autoware::cuda_utils::CudaUniquePtr<std::uint32_t[]> sorted_hash_indexes32_d_{nullptr};
   autoware::cuda_utils::CudaUniquePtr<std::uint32_t[]> unique_mask32_d_{nullptr};
   autoware::cuda_utils::CudaUniquePtr<std::uint32_t[]> unique_indices32_d_{nullptr};
+
+  autoware::cuda_utils::CudaUniquePtr<std::uint32_t[]> point_to_voxel_d_{nullptr};
 
   autoware::cuda_utils::CudaUniquePtr<std::uint8_t[]> sort_workspace_d_{nullptr};
   std::size_t sort_workspace_size_{0};

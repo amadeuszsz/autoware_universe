@@ -202,7 +202,7 @@ __global__ void fill_cloud_kernel(
   const float * points_xyzi, const InputPointT * cloud_compact, const uint32_t num_points_raw,
   const float * pred_probs, const uint32_t num_points, const bool active_comm_seg,
   const bool active_comm_viz, const bool active_comm_filtered,
-  uint32_t * output_num_points_filtered, OutputSegmentationPointType * output_cloud_seg,
+  uint32_t * output_num_points_filtered, std::uint8_t * output_cloud_seg,
   OutputVisualizationPointType * output_cloud_viz, OutputPointT * output_cloud_filtered)
 {
   uint32_t point_idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -228,11 +228,15 @@ __global__ void fill_cloud_kernel(
   }
 
   if (active_comm_seg) {
-    output_cloud_seg[point_idx].x = x;
-    output_cloud_seg[point_idx].y = y;
-    output_cloud_seg[point_idx].z = z;
-    output_cloud_seg[point_idx].class_id = static_cast<uint8_t>(class_id);
-    output_cloud_seg[point_idx].probability = best_prob;
+    auto * output_point =
+      reinterpret_cast<float *>(
+        output_cloud_seg + point_idx * (3 + const_num_classes) * sizeof(float));
+    output_point[0] = x;
+    output_point[1] = y;
+    output_point[2] = z;
+    for (uint32_t i = 0; i < const_num_classes; ++i) {
+      output_point[3 + i] = pred_probs[pred_idx + i];
+    }
   }
 
   if (active_comm_viz) {
@@ -270,7 +274,7 @@ template <typename InputPointT, typename OutputPointT>
 cudaError_t PostprocessCuda::fillCloud_launch_impl(
   const float * points_xyzi, const InputPointT * cloud_compact, const uint32_t num_points_raw,
   const float * pred_probs, const uint32_t num_points, const utils::ActiveComm & active_comm,
-  uint32_t * output_num_points_filtered, OutputSegmentationPointType * output_cloud_seg,
+  uint32_t * output_num_points_filtered, std::uint8_t * output_cloud_seg,
   OutputVisualizationPointType * output_cloud_viz, OutputPointT * output_cloud_filtered)
 {
   dim3 block(utils::divup(num_points, utils::kernel_1d_size));
@@ -287,42 +291,42 @@ cudaError_t PostprocessCuda::fillCloud_launch_impl(
 /* Explicit instantiations */
 template cudaError_t PostprocessCuda::fillCloud_launch_impl<CloudPointTypeXYZI, CloudPointTypeXYZI>(
   const float *, const CloudPointTypeXYZI *, const uint32_t, const float *, const uint32_t,
-  const utils::ActiveComm &, uint32_t *, OutputSegmentationPointType *,
+  const utils::ActiveComm &, uint32_t *, std::uint8_t *,
   OutputVisualizationPointType *, CloudPointTypeXYZI *);
 template cudaError_t
 PostprocessCuda::fillCloud_launch_impl<CloudPointTypeXYZIRC, CloudPointTypeXYZI>(
   const float *, const CloudPointTypeXYZIRC *, const uint32_t, const float *, const uint32_t,
-  const utils::ActiveComm &, uint32_t *, OutputSegmentationPointType *,
+  const utils::ActiveComm &, uint32_t *, std::uint8_t *,
   OutputVisualizationPointType *, CloudPointTypeXYZI *);
 template cudaError_t
 PostprocessCuda::fillCloud_launch_impl<CloudPointTypeXYZIRC, CloudPointTypeXYZIRC>(
   const float *, const CloudPointTypeXYZIRC *, const uint32_t, const float *, const uint32_t,
-  const utils::ActiveComm &, uint32_t *, OutputSegmentationPointType *,
+  const utils::ActiveComm &, uint32_t *, std::uint8_t *,
   OutputVisualizationPointType *, CloudPointTypeXYZIRC *);
 template cudaError_t
 PostprocessCuda::fillCloud_launch_impl<CloudPointTypeXYZIRADRT, CloudPointTypeXYZI>(
   const float *, const CloudPointTypeXYZIRADRT *, const uint32_t, const float *, const uint32_t,
-  const utils::ActiveComm &, uint32_t *, OutputSegmentationPointType *,
+  const utils::ActiveComm &, uint32_t *, std::uint8_t *,
   OutputVisualizationPointType *, CloudPointTypeXYZI *);
 template cudaError_t
 PostprocessCuda::fillCloud_launch_impl<CloudPointTypeXYZIRADRT, CloudPointTypeXYZIRADRT>(
   const float *, const CloudPointTypeXYZIRADRT *, const uint32_t, const float *, const uint32_t,
-  const utils::ActiveComm &, uint32_t *, OutputSegmentationPointType *,
+  const utils::ActiveComm &, uint32_t *, std::uint8_t *,
   OutputVisualizationPointType *, CloudPointTypeXYZIRADRT *);
 template cudaError_t
 PostprocessCuda::fillCloud_launch_impl<CloudPointTypeXYZIRCAEDT, CloudPointTypeXYZI>(
   const float *, const CloudPointTypeXYZIRCAEDT *, const uint32_t, const float *, const uint32_t,
-  const utils::ActiveComm &, uint32_t *, OutputSegmentationPointType *,
+  const utils::ActiveComm &, uint32_t *, std::uint8_t *,
   OutputVisualizationPointType *, CloudPointTypeXYZI *);
 template cudaError_t
 PostprocessCuda::fillCloud_launch_impl<CloudPointTypeXYZIRCAEDT, CloudPointTypeXYZIRC>(
   const float *, const CloudPointTypeXYZIRCAEDT *, const uint32_t, const float *, const uint32_t,
-  const utils::ActiveComm &, uint32_t *, OutputSegmentationPointType *,
+  const utils::ActiveComm &, uint32_t *, std::uint8_t *,
   OutputVisualizationPointType *, CloudPointTypeXYZIRC *);
 template cudaError_t
 PostprocessCuda::fillCloud_launch_impl<CloudPointTypeXYZIRCAEDT, CloudPointTypeXYZIRCAEDT>(
   const float *, const CloudPointTypeXYZIRCAEDT *, const uint32_t, const float *, const uint32_t,
-  const utils::ActiveComm &, uint32_t *, OutputSegmentationPointType *,
+  const utils::ActiveComm &, uint32_t *, std::uint8_t *,
   OutputVisualizationPointType *, CloudPointTypeXYZIRCAEDT *);
 
 /**
@@ -332,7 +336,7 @@ cudaError_t PostprocessCuda::fillCloud_launch(
   const float * points_xyzi, const void * cloud_compact, const uint32_t num_points_raw,
   const float * pred_probs, const uint32_t num_points, CloudFormat input_format,
   CloudFormat output_format, const utils::ActiveComm & active_comm,
-  uint32_t * output_num_points_filtered, OutputSegmentationPointType * output_cloud_seg,
+  uint32_t * output_num_points_filtered, std::uint8_t * output_cloud_seg,
   OutputVisualizationPointType * output_cloud_viz, void * output_cloud_filtered)
 {
   switch (input_format) {
@@ -402,6 +406,48 @@ cudaError_t PostprocessCuda::fillCloud_launch(
     default:
       return cudaErrorInvalidValue;
   }
+}
+
+/**
+ * @brief Kernel: back-project predictions to all original input points.
+ *        Writes x,y,z + class probabilities; zero-fills ego-cropped points (UINT32_MAX map entry).
+ */
+__global__ void backProjectSegKernel(
+  const float * points_xyzi, const uint32_t * input_to_compact_map, const float * pred_probs,
+  const uint32_t input_num_points, std::uint8_t * output_cloud_seg)
+{
+  const uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= input_num_points) return;
+
+  const uint32_t compact_idx = input_to_compact_map[i];
+  auto * out =
+    reinterpret_cast<float *>(output_cloud_seg + i * (3 + const_num_classes) * sizeof(float));
+
+  if (compact_idx == UINT32_MAX) {
+    out[0] = 0.0f;
+    out[1] = 0.0f;
+    out[2] = 0.0f;
+    for (uint32_t c = 0; c < const_num_classes; ++c) out[3 + c] = 0.0f;
+  } else {
+    out[0] = points_xyzi[compact_idx * 4 + 0];
+    out[1] = points_xyzi[compact_idx * 4 + 1];
+    out[2] = points_xyzi[compact_idx * 4 + 2];
+    const float * probs = pred_probs + compact_idx * const_num_classes;
+    for (uint32_t c = 0; c < const_num_classes; ++c) out[3 + c] = probs[c];
+  }
+}
+
+cudaError_t PostprocessCuda::backProjectSeg_launch(
+  const float * points_xyzi, const uint32_t * input_to_compact_map, const float * pred_probs,
+  const uint32_t input_num_points, std::uint8_t * output_cloud_seg)
+{
+  dim3 block(utils::divup(input_num_points, utils::kernel_1d_size));
+  dim3 threads(utils::kernel_1d_size);
+
+  backProjectSegKernel<<<block, threads, 0, stream_>>>(
+    points_xyzi, input_to_compact_map, pred_probs, input_num_points, output_cloud_seg);
+
+  return cudaGetLastError();
 }
 
 }  // namespace autoware::lidar_frnet

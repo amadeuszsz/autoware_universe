@@ -41,6 +41,8 @@ namespace autoware::lidar_frnet::ros_utils
  */
 struct PointCloudLayout
 {
+  PointCloudLayout() = default;
+
   /**
    * @brief Construct layout from field list and point step.
    * @param layout_fields Point field list (e.g. from sensor_msgs PointCloud2)
@@ -87,19 +89,32 @@ inline std::unique_ptr<cuda_blackboard::CudaPointCloud2> generatePointCloudMessa
 }
 
 /**
- * @brief Build point cloud layout for segmentation output (x, y, z, class_id, probability).
- * @return Layout with FLOAT32 x,y,z, FLOAT32 probability and UINT8 class_id
+ * @brief Build point cloud layout for segmentation output (x, y, z, probabilities).
+ * @return Layout with FLOAT32 x,y,z and FLOAT32 probabilities[count=num_classes]
  */
-inline PointCloudLayout generateSegmentationPointCloudLayout()
+inline PointCloudLayout generateSegmentationPointCloudLayout(const std::size_t num_classes)
 {
-  sensor_msgs::msg::PointCloud2 msg;
-  sensor_msgs::PointCloud2Modifier modifier(msg);
-  modifier.setPointCloud2Fields(
-    5, "x", 1, sensor_msgs::msg::PointField::FLOAT32, "y", 1, sensor_msgs::msg::PointField::FLOAT32,
-    "z", 1, sensor_msgs::msg::PointField::FLOAT32, "class_id", 1,
-    sensor_msgs::msg::PointField::UINT8, "probability", 1, sensor_msgs::msg::PointField::FLOAT32);
-  PointCloudLayout layout(msg.fields, msg.point_step);
-  return layout;
+  std::vector<sensor_msgs::msg::PointField> fields;
+  fields.reserve(4);
+
+  auto make_field = [](const std::string & name, const std::uint32_t offset,
+                       const std::uint8_t datatype, const std::uint32_t count) {
+    sensor_msgs::msg::PointField field;
+    field.name = name;
+    field.offset = offset;
+    field.datatype = datatype;
+    field.count = count;
+    return field;
+  };
+
+  fields.push_back(make_field("x", 0, sensor_msgs::msg::PointField::FLOAT32, 1));
+  fields.push_back(make_field("y", 4, sensor_msgs::msg::PointField::FLOAT32, 1));
+  fields.push_back(make_field("z", 8, sensor_msgs::msg::PointField::FLOAT32, 1));
+  fields.push_back(make_field(
+    "probabilities", 12, sensor_msgs::msg::PointField::FLOAT32,
+    static_cast<std::uint32_t>(num_classes)));
+
+  return PointCloudLayout(fields, 3 * sizeof(float) + num_classes * sizeof(float));
 }
 
 /**

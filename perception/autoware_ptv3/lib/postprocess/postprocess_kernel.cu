@@ -19,15 +19,6 @@
 namespace autoware::ptv3
 {
 
-struct OutputSegmentationPointType
-{
-  float x;
-  float y;
-  float z;
-  std::uint8_t class_id;
-  float probability;
-} __attribute__((packed));
-
 __global__ void createVisualizationPointcloudKernel(
   const float4 * input_features, const float * colors, const std::int64_t * labels,
   float4 * output_points, std::size_t num_points)
@@ -46,7 +37,7 @@ __global__ void createVisualizationPointcloudKernel(
 
 __global__ void createSegmentationPointcloudKernel(
   const float4 * input_features, const std::int64_t * labels, const float * pred_probs,
-  OutputSegmentationPointType * output_points, std::size_t num_classes, std::size_t num_points)
+  std::uint8_t * output_points, std::size_t num_classes, std::size_t num_points)
 {
   const auto idx = static_cast<std::uint32_t>(blockIdx.x * blockDim.x + threadIdx.x);
   if (idx >= num_points) {
@@ -54,12 +45,14 @@ __global__ void createSegmentationPointcloudKernel(
   }
 
   const auto input_point = input_features[idx];
-  const auto label = labels[idx];
-  output_points[idx].x = input_point.x;
-  output_points[idx].y = input_point.y;
-  output_points[idx].z = input_point.z;
-  output_points[idx].class_id = static_cast<std::uint8_t>(label);
-  output_points[idx].probability = pred_probs[idx * num_classes + label];
+  auto * output_point =
+    reinterpret_cast<float *>(output_points + idx * (3 + num_classes) * sizeof(float));
+  output_point[0] = input_point.x;
+  output_point[1] = input_point.y;
+  output_point[2] = input_point.z;
+  for (std::size_t class_idx = 0; class_idx < num_classes; ++class_idx) {
+    output_point[3 + class_idx] = pred_probs[idx * num_classes + class_idx];
+  }
 }
 
 template <typename OutputPointT>
@@ -232,7 +225,54 @@ void PostprocessCuda::createSegmentationPointcloud(
 
   createSegmentationPointcloudKernel<<<num_blocks, config_.threads_per_block_, 0, stream_>>>(
     reinterpret_cast<const float4 *>(input_features), pred_labels, pred_probs,
-    reinterpret_cast<OutputSegmentationPointType *>(output_points), num_classes, num_points);
+    output_points, num_classes, num_points);
+
+  CHECK_CUDA_ERROR(cudaStreamSynchronize(stream_));
+}
+
+__global__ void backProjectSegmentationKernel(
+  const float4 * all_points, const std::uint32_t * crop_mask,
+  const std::uint32_t * crop_indices, const std::uint32_t * point_to_voxel,
+  const float * pred_probs, std::uint8_t * output_points, std::size_t num_classes,
+  std::size_t num_input_points)
+{
+  const auto idx = static_cast<std::uint32_t>(blockIdx.x * blockDim.x + threadIdx.x);
+  if (idx >= num_input_points) {
+    return;
+  }
+
+  const auto input_point = all_points[idx];
+  auto * out = reinterpret_cast<float *>(output_points + idx * (3 + num_classes) * sizeof(float));
+  out[0] = input_point.x;
+  out[1] = input_point.y;
+  out[2] = input_point.z;
+
+  if (!crop_mask[idx]) {
+    for (std::size_t c = 0; c < num_classes; ++c) {
+      out[3 + c] = 0.0f;
+    }
+    return;
+  }
+
+  const std::uint32_t cropped_idx = crop_indices[idx] - 1u;
+  const std::uint32_t voxel_idx = point_to_voxel[cropped_idx];
+  const float * probs = pred_probs + voxel_idx * num_classes;
+  for (std::size_t c = 0; c < num_classes; ++c) {
+    out[3 + c] = probs[c];
+  }
+}
+
+void PostprocessCuda::createSegmentationPointcloudBackProjected(
+  const float * all_points, const std::uint32_t * crop_mask,
+  const std::uint32_t * crop_indices, const std::uint32_t * point_to_voxel,
+  const float * pred_probs, std::uint8_t * output_points, std::size_t num_classes,
+  std::size_t num_input_points)
+{
+  auto num_blocks = divup(num_input_points, config_.threads_per_block_);
+
+  backProjectSegmentationKernel<<<num_blocks, config_.threads_per_block_, 0, stream_>>>(
+    reinterpret_cast<const float4 *>(all_points), crop_mask, crop_indices, point_to_voxel,
+    pred_probs, output_points, num_classes, num_input_points);
 
   CHECK_CUDA_ERROR(cudaStreamSynchronize(stream_));
 }

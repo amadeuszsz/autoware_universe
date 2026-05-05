@@ -76,9 +76,10 @@ void PTv3TRT::allocateMessages()
     segmented_points_msg_ptr_->fields = segmented_pointcloud_fields_;
     segmented_points_msg_ptr_->is_bigendian = false;
     segmented_points_msg_ptr_->is_dense = true;
-    segmented_points_msg_ptr_->point_step = 17U;
+    segmented_points_msg_ptr_->point_step =
+      3U * sizeof(float) + static_cast<std::uint32_t>(config_.class_names_.size() * sizeof(float));
     segmented_points_msg_ptr_->data = cuda_blackboard::make_unique<std::uint8_t[]>(
-      config_.max_num_voxels_ * segmented_points_msg_ptr_->point_step);
+      static_cast<std::size_t>(config_.cloud_capacity_) * segmented_points_msg_ptr_->point_step);
   }
 
   if (visualization_points_msg_ptr_ == nullptr) {
@@ -151,10 +152,11 @@ void PTv3TRT::createPointFields()
     make_point_field("y", 4, sensor_msgs::msg::PointField::FLOAT32, 1));
   segmented_pointcloud_fields_.push_back(
     make_point_field("z", 8, sensor_msgs::msg::PointField::FLOAT32, 1));
-  segmented_pointcloud_fields_.push_back(
-    make_point_field("class_id", 12, sensor_msgs::msg::PointField::UINT8, 1));
-  segmented_pointcloud_fields_.push_back(
-    make_point_field("probability", 13, sensor_msgs::msg::PointField::FLOAT32, 1));
+  for (std::size_t i = 0; i < config_.class_names_.size(); ++i) {
+    segmented_pointcloud_fields_.push_back(make_point_field(
+      config_.class_names_[i], static_cast<int>(12 + i * sizeof(float)),
+      sensor_msgs::msg::PointField::FLOAT32, 1));
+  }
 
   visualization_pointcloud_fields_.push_back(
     make_point_field("x", 0, sensor_msgs::msg::PointField::FLOAT32, 1));
@@ -358,6 +360,9 @@ bool PTv3TRT::preProcess(const std::shared_ptr<const cuda_blackboard::CudaPointC
     return false;
   }
 
+  num_input_points_ = static_cast<std::int64_t>(
+    std::min(static_cast<std::size_t>(num_points), static_cast<std::size_t>(config_.cloud_capacity_)));
+
   num_voxels_ = pre_ptr_->generateFeatures(
     msg_ptr->data.get(), input_format_, num_points, feat_d_.get(), grid_coord_d_.get(),
     serialized_code_d_.get(), compact_points_d_.get());
@@ -404,13 +409,16 @@ bool PTv3TRT::postProcess(
 {
   // Segmentation pointcloud
   if (should_publish_segmented_pointcloud) {
-    post_ptr_->createSegmentationPointcloud(
-      feat_d_.get(), pred_labels_d_.get(), pred_probs_d_.get(),
-      segmented_points_msg_ptr_->data.get(), config_.class_names_.size(), num_voxels_);
-    CHECK_CUDA_ERROR(cudaStreamSynchronize(stream_));
+    post_ptr_->createSegmentationPointcloudBackProjected(
+      pre_ptr_->getPoints(), pre_ptr_->getCropMask(), pre_ptr_->getCropIndices(),
+      pre_ptr_->getPointToVoxel(), pred_probs_d_.get(),
+      segmented_points_msg_ptr_->data.get(), config_.class_names_.size(),
+      static_cast<std::size_t>(num_input_points_));
 
     segmented_points_msg_ptr_->header = header;
-    segmented_points_msg_ptr_->width = num_voxels_;
+    segmented_points_msg_ptr_->width = static_cast<std::uint32_t>(num_input_points_);
+    segmented_points_msg_ptr_->row_step =
+      static_cast<std::uint32_t>(num_input_points_) * segmented_points_msg_ptr_->point_step;
     publish_segmented_pointcloud_(std::move(segmented_points_msg_ptr_));
     segmented_points_msg_ptr_ = nullptr;
   }

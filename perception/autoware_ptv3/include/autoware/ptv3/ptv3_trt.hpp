@@ -100,6 +100,7 @@ protected:
 
   // Preprocess outputs
   std::int64_t num_voxels_{0};
+  std::int64_t num_input_points_{0};
 
   CudaUniquePtr<std::uint8_t[]> compact_points_d_{nullptr};
   CudaUniquePtr<std::int64_t[]> grid_coord_d_{nullptr};

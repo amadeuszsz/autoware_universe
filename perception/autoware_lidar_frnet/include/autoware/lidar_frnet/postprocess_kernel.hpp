@@ -50,7 +50,7 @@ public:
    * @param output_format Filtered output cloud format
    * @param active_comm Which outputs to fill
    * @param output_num_points_filtered Output: number of points written to output_cloud_filtered
-   * @param output_cloud_seg Segmentation cloud (x, y, z, class_id, probability)
+   * @param output_cloud_seg Segmentation cloud (x, y, z, probabilities)
    * @param output_cloud_viz Visualization cloud (x, y, z, rgb)
    * @param output_cloud_filtered Filtered point cloud (output_format)
    * @return cudaError_t
@@ -59,15 +59,28 @@ public:
     const float * points_xyzi, const void * cloud_compact, const uint32_t num_points_raw,
     const float * pred_probs, const uint32_t num_points, CloudFormat input_format,
     CloudFormat output_format, const utils::ActiveComm & active_comm,
-    uint32_t * output_num_points_filtered, OutputSegmentationPointType * output_cloud_seg,
+    uint32_t * output_num_points_filtered, std::uint8_t * output_cloud_seg,
     OutputVisualizationPointType * output_cloud_viz, void * output_cloud_filtered);
+
+  /**
+   * @brief Back-project predictions to all original input points using the compact index map.
+   *        Points with compact_idx == UINT32_MAX (ego-cropped) get zero probabilities.
+   * @param points_xyzi Compact xyzi buffer (num_points_raw * 4)
+   * @param input_to_compact_map Per-input-point compact index; UINT32_MAX if cropped
+   * @param pred_probs Network predictions (num_points_after_interpolation * num_classes)
+   * @param input_num_points Number of original input points
+   * @param output_cloud_seg Output: x,y,z + probabilities for each input point
+   */
+  cudaError_t backProjectSeg_launch(
+    const float * points_xyzi, const uint32_t * input_to_compact_map, const float * pred_probs,
+    const uint32_t input_num_points, std::uint8_t * output_cloud_seg);
 
 private:
   template <typename InputPointT, typename OutputPointT>
   cudaError_t fillCloud_launch_impl(
     const float * points_xyzi, const InputPointT * cloud_compact, const uint32_t num_points_raw,
     const float * pred_probs, const uint32_t num_points, const utils::ActiveComm & active_comm,
-    uint32_t * output_num_points_filtered, OutputSegmentationPointType * output_cloud_seg,
+    uint32_t * output_num_points_filtered, std::uint8_t * output_cloud_seg,
     OutputVisualizationPointType * output_cloud_viz, OutputPointT * output_cloud_filtered);
 
   cudaStream_t stream_;
