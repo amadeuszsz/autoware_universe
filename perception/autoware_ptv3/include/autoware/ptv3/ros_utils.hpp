@@ -22,6 +22,8 @@
 #include <rclcpp/rclcpp.hpp>
 
 #include <autoware_perception_msgs/msg/detected_object.hpp>
+#include <autoware_perception_msgs/msg/tracked_object.hpp>
+#include <unique_identifier_msgs/msg/uuid.hpp>
 
 #include <cstdint>
 #include <string>
@@ -53,14 +55,38 @@ static_assert(sizeof(CloudPointType) == sizeof(autoware::point_types::PointXYZIR
 /**
  * @brief Convert a decoded detection box into a DetectedObject message.
  *
+ * The box velocity in the lidar frame becomes the object twist in the object frame.
+ *
  * @param box3d Decoded detection box.
  * @param class_names Detection class names indexed by box label.
- * @param has_twist Whether to populate the object twist from box velocity.
  * @param obj Output object to fill.
  */
 void box3d_to_detected_object(
-  const Box3D & box3d, const std::vector<std::string> & class_names, bool has_twist,
+  const Box3D & box3d, const std::vector<std::string> & class_names,
   autoware_perception_msgs::msg::DetectedObject & obj);
+
+/**
+ * @brief Build the identifier of a track, unique across the tracks of every node session.
+ *
+ * The track id leads, least significant byte first, so the identifiers of a session already
+ * differ in their first bytes, which is where tools print a short form of the identifier.
+ *
+ * @param session_id Identifier of the node session, the trailing 8 bytes.
+ * @param track_id Track id within the session, the leading 8 bytes.
+ * @return Identifier of the track.
+ */
+unique_identifier_msgs::msg::UUID track_uuid(std::uint64_t session_id, std::int64_t track_id);
+
+/**
+ * @brief Convert a detected object of a tracked instance into a TrackedObject message.
+ *
+ * @param detected_object Detected object of the instance.
+ * @param object_id Identifier of the instance track.
+ * @return Tracked object with the pose, twist, shape and classification of the detection.
+ */
+autoware_perception_msgs::msg::TrackedObject detected_object_to_tracked_object(
+  const autoware_perception_msgs::msg::DetectedObject & detected_object,
+  const unique_identifier_msgs::msg::UUID & object_id);
 
 /**
  * @brief Map a detection class name to an ObjectClassification label.

@@ -361,68 +361,37 @@ TEST_F(PostprocessKernelTest, FilteredPointcloudKeepsInputOrder)
   EXPECT_EQ(actual_x, expected_x);
 }
 
-TEST_F(PostprocessKernelTest, VoxelOutputsExcludePastOnlyVoxels)
+// Every row is published in its input order, colored by its label and black for an invalid one.
+TEST_F(PostprocessKernelTest, VisualizationPointcloudPublishesEveryRowInInputOrder)
 {
+  const auto config = makeTestConfig(true, "none");
+  PostprocessCuda postprocess(config, stream_);
+
+  // XYZ + intensity per row: feature stride 4.
   const std::vector<float> features{
-    1.0F, 0.0F, 0.0F, 0.5F, 0.0F,  // current car
-    2.0F, 0.0F, 0.0F, 0.5F, 0.1F,  // past-only car
-    3.0F, 0.0F, 0.0F, 0.5F, 0.0F,  // current truck
+    3.0F, 0.0F, 0.0F, 0.5F,  // car
+    1.0F, 0.0F, 0.0F, 0.5F,  // truck, published although the filter removes it elsewhere
+    2.0F, 0.0F, 0.0F, 0.5F,  // invalid label
   };
-  const std::vector<std::int64_t> labels{0, 0, 1};
-  const std::vector<float> probs{0.9F, 0.1F, 0.0F, 0.9F, 0.1F, 0.0F, 0.1F, 0.9F, 0.0F};
+  const std::vector<std::int64_t> labels{0, 1, -1};
   auto features_d = makeDeviceBuffer<float>(features.size());
   auto labels_d = makeDeviceBuffer<std::int64_t>(labels.size());
-  auto probs_d = makeDeviceBuffer<float>(probs.size());
-  auto indices_d = makeDeviceBuffer<std::uint32_t>(labels.size());
-  auto starts_d = makeDeviceBuffer<std::uint32_t>(labels.size());
-  copyToDevice(starts_d.get(), std::vector<std::uint32_t>{0, 1, 2});
-  const VoxelPointMapping mapping{indices_d.get(), starts_d.get(), 5};
-  auto segmentation_d = makeDeviceBuffer<PointXYZCPE>(labels.size());
   auto visualization_d = makeDeviceBuffer<float4>(labels.size());
   copyToDevice(features_d.get(), features);
   copyToDevice(labels_d.get(), labels);
-  copyToDevice(probs_d.get(), probs);
-  copyToDevice(indices_d.get(), std::vector<std::uint32_t>{4, 5, 0});
 
-  for (const bool filter_segmentation : {false, true}) {
-    PostprocessCuda postprocess(makeTestConfig(filter_segmentation, "none"), stream_);
-    const auto count = postprocess.createSegmentationPointcloud(
-      features_d.get(), 5, labels_d.get(), probs_d.get(), segmentation_d.get(), kNumClasses,
-      labels.size(), mapping);
-    ASSERT_EQ(count, filter_segmentation ? 1U : 2U);
-    auto points = copyToHost(segmentation_d.get(), count);
-    std::sort(
-      points.begin(), points.end(), [](const auto & a, const auto & b) { return a.x < b.x; });
-    EXPECT_FLOAT_EQ(points[0].x, 1.0F);
-    EXPECT_EQ(points[0].class_id, static_cast<std::uint8_t>(PointCloudClassification::CAR));
-    if (!filter_segmentation) {
-      EXPECT_FLOAT_EQ(points[1].x, 3.0F);
-    }
+  postprocess.createVisualizationPointcloud(
+    features_d.get(), 4, labels_d.get(), reinterpret_cast<float *>(visualization_d.get()),
+    kNumClasses, labels.size());
+  ASSERT_EQ(cudaStreamSynchronize(stream_), cudaSuccess);
 
-    const auto visualization_count = postprocess.createVisualizationPointcloud(
-      features_d.get(), 5, labels_d.get(), reinterpret_cast<float *>(visualization_d.get()),
-      kNumClasses, labels.size(), mapping);
-    ASSERT_EQ(visualization_count, 2U);
-    auto visual = copyToHost(visualization_d.get(), visualization_count);
-    std::sort(
-      visual.begin(), visual.end(), [](const auto & a, const auto & b) { return a.x < b.x; });
-    EXPECT_FLOAT_EQ(visual[0].x, 1.0F);
-    EXPECT_FLOAT_EQ(visual[1].x, 3.0F);
-  }
-
-  // Reusing the output buffers with no current voxels must publish zero points.
-  copyToDevice(indices_d.get(), std::vector<std::uint32_t>{5, 5, 5});
-  PostprocessCuda postprocess(makeTestConfig(false, "none"), stream_);
-  EXPECT_EQ(
-    postprocess.createSegmentationPointcloud(
-      features_d.get(), 5, labels_d.get(), probs_d.get(), segmentation_d.get(), kNumClasses,
-      labels.size(), mapping),
-    0U);
-  EXPECT_EQ(
-    postprocess.createVisualizationPointcloud(
-      features_d.get(), 5, labels_d.get(), reinterpret_cast<float *>(visualization_d.get()),
-      kNumClasses, labels.size(), mapping),
-    0U);
+  const auto visual = copyToHost(visualization_d.get(), labels.size());
+  EXPECT_FLOAT_EQ(visual[0].x, 3.0F);
+  EXPECT_FLOAT_EQ(visual[1].x, 1.0F);
+  EXPECT_FLOAT_EQ(visual[2].x, 2.0F);
+  EXPECT_FLOAT_EQ(visual[0].w, config.colors_rgb_[0]);
+  EXPECT_FLOAT_EQ(visual[1].w, config.colors_rgb_[1]);
+  EXPECT_FLOAT_EQ(visual[2].w, 0.0F);
 }
 
 TEST_F(PostprocessKernelTest, FilteredVoxelRepresentativesPreserveSourceFieldsAndSupportConversion)
@@ -433,15 +402,14 @@ TEST_F(PostprocessKernelTest, FilteredVoxelRepresentativesPreserveSourceFieldsAn
     {4.0F, 5.0F, 6.0F, 80, 2, 4, 0.3F, 0.4F, 6.0F, 200},
     {7.0F, 8.0F, 9.0F, 120, 3, 6, 0.5F, 0.6F, 9.0F, 300},
   };
-  // Voxel order differs from original point order. Past-only car is excluded; truck is filtered.
-  const std::vector<std::uint32_t> indices{2, 3, 0, 1};
-  const std::vector<float> probs{0.9F, 0.1F, 0.0F, 0.9F, 0.1F, 0.0F,
-                                 0.1F, 0.9F, 0.0F, 0.0F, 0.1F, 0.9F};
+  // Voxel order differs from the original point order, the truck voxel is filtered.
+  const std::vector<std::uint32_t> indices{2, 0, 1};
+  const std::vector<float> probs{0.9F, 0.1F, 0.0F, 0.1F, 0.9F, 0.0F, 0.0F, 0.1F, 0.9F};
   auto input_d = makeDeviceBuffer<CloudPointTypeXYZIRCAEDT>(points.size());
   auto indices_d = makeDeviceBuffer<std::uint32_t>(indices.size());
   auto starts_d = makeDeviceBuffer<std::uint32_t>(indices.size());
-  copyToDevice(starts_d.get(), std::vector<std::uint32_t>{0, 1, 2, 3});
-  const VoxelPointMapping mapping{indices_d.get(), starts_d.get(), points.size()};
+  copyToDevice(starts_d.get(), std::vector<std::uint32_t>{0, 1, 2});
+  const VoxelPointMapping mapping{indices_d.get(), starts_d.get()};
   auto probs_d = makeDeviceBuffer<float>(probs.size());
   auto output_d = makeDeviceBuffer<CloudPointTypeXYZIRCAEDT>(indices.size());
   auto xyzi_d = makeDeviceBuffer<CloudPointTypeXYZI>(indices.size());
@@ -479,13 +447,6 @@ TEST_F(PostprocessKernelTest, FilteredVoxelRepresentativesPreserveSourceFieldsAn
   EXPECT_FLOAT_EQ(xyzi[0].intensity, 80.0F);
   EXPECT_FLOAT_EQ(xyzi[1].x, 7.0F);
   EXPECT_FLOAT_EQ(xyzi[1].intensity, 120.0F);
-
-  copyToDevice(indices_d.get(), std::vector<std::uint32_t>(indices.size(), points.size()));
-  EXPECT_EQ(
-    postprocess.createFilteredPointcloud(
-      input_d.get(), CloudFormat::XYZIRCAEDT, CloudFormat::XYZI, probs_d.get(), xyzi_d.get(),
-      kNumClasses, indices.size(), mapping),
-    0U);
 }
 
 }  // namespace test

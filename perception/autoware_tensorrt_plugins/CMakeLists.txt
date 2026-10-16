@@ -109,6 +109,7 @@ if(TRT_AVAIL AND CUDA_AVAIL AND SPCONV_AVAIL)
     src/multi_scale_deform_attn_ops/ms_deform_attn_kernel.cu
     src/rotate_ops/rotate_kernel.cu
     src/select_and_pad_ops/select_and_pad_kernel.cu
+    src/sparse_deformable_aggregation_ops/sparse_deformable_aggregation.cu
   )
 
   add_library(${PROJECT_NAME} SHARED
@@ -132,6 +133,8 @@ if(TRT_AVAIL AND CUDA_AVAIL AND SPCONV_AVAIL)
     src/segment_csr_plugin.cpp
     src/select_and_pad_plugin.cpp
     src/select_and_pad_plugin_creator.cpp
+    src/sparse_deformable_aggregation_plugin.cpp
+    src/sparse_deformable_aggregation_plugin_creator.cpp
     src/unique_plugin.cpp
     src/unique_plugin_creator.cpp
     src/plugin_registration.cpp
@@ -153,6 +156,7 @@ if(TRT_AVAIL AND CUDA_AVAIL AND SPCONV_AVAIL)
     ament_add_gtest(reference_kernels_test
       test/argsort_kernel_test.cpp
       test/segment_csr_kernel_test.cpp
+      test/sparse_deformable_aggregation_kernel_test.cpp
       test/unique_kernel_test.cpp
     )
     if(TARGET reference_kernels_test)

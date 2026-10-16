@@ -49,48 +49,43 @@ public:
   ~PreprocessCuda();
 
   /**
-   * @brief Crops and voxelizes the densified cloud into padded voxels.
+   * @brief Crops and voxelizes the input cloud into padded voxels.
    *
-   * `points` holds `(x, y, z, intensity, time_lag)` rows with the current frame as the leading
-   * `num_current_points` block. The crop drops out-of-range points and sweep ego ghosts;
-   * compaction preserves order, so the current frame stays the leading block of the cropped buffer
-   * (`num_cropped_current_points` rows). The emitted voxels are sorted by their order-0
-   * serialized code and hold the first `max_points_per_voxel` of their points in cropped order,
-   * zero padded, which mirrors the training-time hard voxelization. The ordering is also required
-   * by generateSerializedPoolingMetadata.
+   * `points` holds `(x, y, z, intensity)` rows. The crop drops out-of-range points and its
+   * compaction preserves their order. The emitted voxels are sorted by their order-0 serialized
+   * code and hold the first `max_points_per_voxel` of their points in cropped order, zero padded,
+   * which mirrors the training-time hard voxelization. The ordering is also required by
+   * generateSerializedPoolingMetadata.
    *
-   * @param points Densified input rows, laid out [num_points, 5].
-   * @param num_points Number of densified rows.
-   * @param num_current_points Size of the leading current-frame block.
-   * @param voxels Output padded voxel points, laid out [num_voxels, max_points_per_voxel, 5].
+   * @param points Input rows, laid out [num_points, 4].
+   * @param num_points Number of input rows.
+   * @param voxels Output padded voxel points, laid out [num_voxels, max_points_per_voxel, 4].
    * @param num_points_per_voxel Output valid point count per voxel.
    * @param voxel_coords Output grid coordinates, laid out [num_voxels, 3].
    * @param serialized_code Output serialized codes, laid out [num_orders, num_voxels].
    * @param inverse_map Optional output mapping each cropped point to its voxel index. Skipped if
    * nullptr.
    * @param num_cropped_points Output number of in-range points.
-   * @param num_cropped_current_points Output number of in-range current-frame points.
    * @return Number of unique voxels. May exceed max_num_voxels, in which case only the first
    * max_num_voxels voxels were written to the outputs.
    */
   std::size_t generateVoxels(
-    const float * points, std::size_t num_points, std::size_t num_current_points, float * voxels,
+    const float * points, std::size_t num_points, float * voxels,
     std::int32_t * num_points_per_voxel, std::int32_t * voxel_coords,
-    std::int64_t * serialized_code, std::int64_t * inverse_map, std::size_t * num_cropped_points,
-    std::size_t * num_cropped_current_points);
+    std::int64_t * serialized_code, std::int64_t * inverse_map, std::size_t * num_cropped_points);
 
   /**
-   * @brief Compacts the in-range current-frame points of the original input message.
+   * @brief Compacts the in-range points of the original input message.
    *
    * Must run after generateVoxels, whose crop mask and indices it consumes.
    *
-   * @param current_points Current-frame message points in `input_format` layout.
-   * @param input_format Point layout of `current_points`.
-   * @param num_current_points Number of current-frame points.
+   * @param source_points Message points in `input_format` layout.
+   * @param input_format Point layout of `source_points`.
+   * @param num_points Number of message points.
    * @param output_points Output in-range points, in `input_format` layout.
    */
-  void extractCurrentSourcePoints(
-    const void * current_points, CloudFormat input_format, std::size_t num_current_points,
+  void extractSourcePoints(
+    const void * source_points, CloudFormat input_format, std::size_t num_points,
     void * output_points);
 
   /**
@@ -150,12 +145,12 @@ public:
 
   [[nodiscard]] const std::uint32_t * cropMask() const { return crop_mask_d_.get(); }
   [[nodiscard]] const std::uint32_t * cropIndices() const { return crop_indices_d_.get(); }
-  /// In-range densified rows in cropped order, current frame first.
+  /// In-range rows in cropped order.
   [[nodiscard]] const float * croppedFeatures() const { return cropped_points_d_.get(); }
   /// Valid after generateVoxels, until the next preprocessing call.
-  [[nodiscard]] VoxelPointMapping voxelPointMapping(std::size_t num_current_points) const
+  [[nodiscard]] VoxelPointMapping voxelPointMapping() const
   {
-    return {sorted_code_indices_d_.get(), voxel_start_d_.get(), num_current_points};
+    return {sorted_code_indices_d_.get(), voxel_start_d_.get()};
   }
 
 private:
@@ -176,7 +171,7 @@ private:
   // both deduplicates voxels and puts them in order-0 serialization order.
   autoware::cuda_utils::CudaUniquePtr<std::int64_t[]> codes_d_{nullptr};
   autoware::cuda_utils::CudaUniquePtr<std::int64_t[]> sorted_codes_d_{nullptr};
-  // Original densified-cloud indices, compacted and then sorted alongside the voxel codes.
+  // Original input cloud indices, compacted and then sorted alongside the voxel codes.
   autoware::cuda_utils::CudaUniquePtr<std::uint32_t[]> code_indices_d_{nullptr};
   autoware::cuda_utils::CudaUniquePtr<std::uint32_t[]> sorted_code_indices_d_{nullptr};
   autoware::cuda_utils::CudaUniquePtr<std::uint32_t[]> unique_mask_d_{nullptr};
@@ -187,7 +182,6 @@ private:
   std::size_t generate_voxels_workspace_size_{0};
 
   autoware::cuda_utils::CudaUniquePtrHost<std::uint32_t> num_cropped_points_;
-  autoware::cuda_utils::CudaUniquePtrHost<std::uint32_t> num_cropped_current_points_;
   autoware::cuda_utils::CudaUniquePtrHost<std::uint32_t> num_unique_points_;
   cudaEvent_t num_cropped_points_copy_event_;
   cudaEvent_t num_unique_points_copy_event_;

@@ -18,8 +18,9 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
-#include <cstdint>
+#include <cstddef>
 #include <vector>
 
 namespace autoware::ptv3
@@ -27,12 +28,15 @@ namespace autoware::ptv3
 namespace test
 {
 
+constexpr std::size_t num_classes{2};
+constexpr std::size_t num_anchor{4};
+
+// CAR and PEDESTRIAN with thresholds per distance bin, pedestrians alone in a circle NMS group.
 PTv3Config makePostprocessConfig()
 {
   PTv3ConfigParams params;
   params.use_seg3d_head = false;
   params.use_det3d_head = true;
-  params.cloud_capacity = 8;
   params.voxels_num = {1, 4, 8};
   params.pooled_voxels_num_max = {8, 8, 8, 8};
   params.point_cloud_range = {0.0F, 0.0F, 0.0F, 16.0F, 16.0F, 4.0F};
@@ -40,71 +44,97 @@ PTv3Config makePostprocessConfig()
   params.pooling_strides = {2, 2, 2, 2};
   params.enc_channels = {8, 16, 32, 64, 128};
   params.patch_sizes = {4, 4, 4, 4, 4};
-  params.bbox_voxel_size = {8.0F, 8.0F, 4.0F};
-  params.distance_bin_upper_limits = {100.0F};
-  params.detection_score_thresholds = {0.4F, 0.4F};
-  params.yaw_norm_thresholds = {0.1F, 0.1F};
-  params.num_proposals = 3;
-  params.post_center_range = {-1.0F, -1.0F, -1.0F, 20.0F, 20.0F, 20.0F};
+  params.distance_bin_upper_limits = {10.0F, 20.0F};
+  params.detection_score_thresholds = {0.1F, 0.2F, 0.3F, 0.4F};
+  params.num_anchor = num_anchor;
+  params.num_temp_instances = 2;
+  params.circle_nms_class_groups = {-1, 0};
+  params.circle_nms_radii = {0.5F};
   return makeConfig(params);
 }
 
-class Detection3DPostprocessTest : public PTv3CudaTest
+Box3D makeBox(const int label, const float score, const float x, const float y)
 {
-};
+  Box3D box;
+  box.label = label;
+  box.score = score;
+  box.x = x;
+  box.y = y;
+  return box;
+}
 
-TEST_F(Detection3DPostprocessTest, DecodesFiltersAndSortsBoxes)
+float logit(const float probability)
 {
-  const auto config = makePostprocessConfig();
-  Detection3DPostprocess postprocess(config, stream_);
+  return std::log(probability / (1.0F - probability));
+}
 
-  const std::vector<float> query_heatmap_score{1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F};
-  const std::vector<std::int64_t> query_labels{0, 1, -1};
-  const std::vector<float> heatmap{0.0F, 0.0F, 0.0F, 0.0F, 1.3862944F, 0.0F};
-  const std::vector<float> center{1.0F, 0.5F, 0.0F, 1.0F, 0.5F, 0.0F};
-  const std::vector<float> height{2.0F, 3.0F, 0.0F};
-  const std::vector<float> dim{std::log(2.0F), std::log(3.0F), 0.0F,
-                               std::log(1.0F), std::log(2.0F), 0.0F,
-                               std::log(2.0F), std::log(1.0F), 0.0F};
-  const std::vector<float> rot{0.0F, 1.0F, 0.0F, 1.0F, 0.0F, 1.0F};
-  const std::vector<float> vel{0.1F, 0.2F, 0.0F, 1.1F, 1.2F, 0.0F};
+TEST(Detection3DPostprocessTest, DecodesEveryQueryIntoTheBoxOfItsBestClass)
+{
+  const Detection3DPostprocess postprocess(makePostprocessConfig());
+  std::vector<float> classification(num_anchor * num_classes, logit(0.01F));
+  std::vector<float> prediction(num_anchor * Detection3DPostprocess::anchor_dim, 0.0F);
+  std::vector<float> quality(num_anchor * Detection3DPostprocess::quality_dim, 0.0F);
+  classification[2 * num_classes + 0] = logit(0.3F);
+  classification[2 * num_classes + 1] = logit(0.8F);
+  quality[2 * Detection3DPostprocess::quality_dim] = logit(0.5F);
+  float * state = prediction.data() + 2 * Detection3DPostprocess::anchor_dim;
+  const std::vector<float> anchor_state{
+    1.0F,           2.0F,           0.5F,           std::log(4.0F), std::log(2.0F),
+    std::log(1.5F), std::sin(0.3F), std::cos(0.3F), 1.5F,           -0.5F};
+  std::copy(anchor_state.begin(), anchor_state.end(), state);
 
-  auto query_heatmap_score_d = makeDeviceBuffer<float>(query_heatmap_score.size());
-  auto query_labels_d = makeDeviceBuffer<std::int64_t>(query_labels.size());
-  auto heatmap_d = makeDeviceBuffer<float>(heatmap.size());
-  auto center_d = makeDeviceBuffer<float>(center.size());
-  auto height_d = makeDeviceBuffer<float>(height.size());
-  auto dim_d = makeDeviceBuffer<float>(dim.size());
-  auto rot_d = makeDeviceBuffer<float>(rot.size());
-  auto vel_d = makeDeviceBuffer<float>(vel.size());
-  copyToDevice(query_heatmap_score_d.get(), query_heatmap_score);
-  copyToDevice(query_labels_d.get(), query_labels);
-  copyToDevice(heatmap_d.get(), heatmap);
-  copyToDevice(center_d.get(), center);
-  copyToDevice(height_d.get(), height);
-  copyToDevice(dim_d.get(), dim);
-  copyToDevice(rot_d.get(), rot);
-  copyToDevice(vel_d.get(), vel);
+  const auto boxes =
+    postprocess.decodeQueries(classification.data(), prediction.data(), quality.data());
 
-  EXPECT_EQ(
-    postprocess.process(
-      query_heatmap_score_d.get(), query_labels_d.get(), heatmap_d.get(), center_d.get(),
-      height_d.get(), dim_d.get(), rot_d.get(), vel_d.get(), stream_),
-    cudaSuccess);
-  ASSERT_EQ(cudaStreamSynchronize(stream_), cudaSuccess);
+  ASSERT_EQ(boxes.size(), num_anchor);
+  const auto & box = boxes[2];
+  EXPECT_EQ(box.label, 1);
+  EXPECT_NEAR(box.score, 0.4F, 1e-5F);
+  EXPECT_FLOAT_EQ(box.x, 1.0F);
+  EXPECT_FLOAT_EQ(box.y, 2.0F);
+  EXPECT_FLOAT_EQ(box.z, 0.5F);
+  EXPECT_NEAR(box.length, 4.0F, 1e-5F);
+  EXPECT_NEAR(box.width, 2.0F, 1e-5F);
+  EXPECT_NEAR(box.height, 1.5F, 1e-5F);
+  EXPECT_NEAR(box.yaw, 0.3F, 1e-5F);
+  EXPECT_FLOAT_EQ(box.vel_x, 1.5F);
+  EXPECT_FLOAT_EQ(box.vel_y, -0.5F);
+  EXPECT_EQ(box.track_id, -1);
+}
 
-  ASSERT_EQ(postprocess.numBoxes(), 2U);
-  const auto boxes = copyToHost(postprocess.deviceBoxes(), postprocess.numBoxes());
-  EXPECT_EQ(boxes[0].label, 1);
-  EXPECT_NEAR(boxes[0].score, 0.8F, 1e-5F);
-  EXPECT_FLOAT_EQ(boxes[0].x, 4.0F);
-  EXPECT_FLOAT_EQ(boxes[0].y, 4.0F);
-  EXPECT_FLOAT_EQ(boxes[0].vel_x, 0.2F);
-  EXPECT_FLOAT_EQ(boxes[0].vel_y, 1.2F);
-  EXPECT_EQ(boxes[1].label, 0);
-  EXPECT_NEAR(boxes[1].score, 0.5F, 1e-5F);
-  EXPECT_FLOAT_EQ(boxes[1].x, 8.0F);
-  EXPECT_FLOAT_EQ(boxes[1].y, 8.0F);
+TEST(Detection3DPostprocessTest, KeepsTheBoxesReachingTheThresholdOfTheirDistance)
+{
+  const Detection3DPostprocess postprocess(makePostprocessConfig());
+
+  const auto boxes = postprocess.select({
+    makeBox(0, 0.15F, 5.0F, 0.0F),   // first bin, car threshold 0.1
+    makeBox(0, 0.25F, 15.0F, 0.0F),  // second bin, car threshold 0.3
+    makeBox(1, 0.35F, 0.0F, 6.0F),   // first bin, pedestrian threshold 0.2
+    makeBox(0, 0.95F, 25.0F, 0.0F),  // past the last bin
+  });
+
+  ASSERT_EQ(boxes.size(), 2U);
+  EXPECT_FLOAT_EQ(boxes[0].score, 0.35F);
+  EXPECT_FLOAT_EQ(boxes[1].score, 0.15F);
+}
+
+TEST(Detection3DPostprocessTest, SuppressesOnlyWithinACircleNmsGroup)
+{
+  const Detection3DPostprocess postprocess(makePostprocessConfig());
+
+  const auto boxes = postprocess.select({
+    makeBox(1, 0.6F, 1.0F, 1.0F),
+    makeBox(1, 0.9F, 1.3F, 1.0F),  // suppresses the pedestrian 0.3 m away
+    makeBox(1, 0.5F, 2.0F, 1.0F),  // 0.7 m away from the better pedestrian
+    makeBox(0, 0.8F, 1.2F, 1.0F),  // cars are never suppressed
+    makeBox(0, 0.7F, 1.1F, 1.0F),
+  });
+
+  ASSERT_EQ(boxes.size(), 4U);
+  EXPECT_FLOAT_EQ(boxes[0].score, 0.9F);
+  EXPECT_FLOAT_EQ(boxes[1].score, 0.8F);
+  EXPECT_FLOAT_EQ(boxes[2].score, 0.7F);
+  EXPECT_FLOAT_EQ(boxes[3].score, 0.5F);
 }
 
 }  // namespace test

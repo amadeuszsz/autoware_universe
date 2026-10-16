@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -49,16 +50,10 @@ PTv3Node::PTv3Node(const rclcpp::NodeOptions & options) : Node("ptv3", options)
     this->declare_parameter<std::string>("trt_precision", descriptor);
   const auto cloud_capacity = this->declare_parameter<std::int64_t>("cloud_capacity", descriptor);
 
-  // Densification parameters
-  const std::string densification_world_frame_id =
-    this->declare_parameter<std::string>("densification_world_frame_id", descriptor);
-  const auto densification_num_past_frames =
-    this->declare_parameter<std::int64_t>("densification_num_past_frames", descriptor);
-  densification_world_frame_id_ = densification_world_frame_id;
-  densification_num_past_frames_ = densification_num_past_frames;
-  if (densification_num_past_frames_ > 0) {
-    tf_buffer_.emplace(this->get_clock());
-    tf_listener_.emplace(*tf_buffer_);
+  // Frame in which the detection memory follows the ego motion
+  world_frame_id_ = this->declare_parameter<std::string>("world_frame_id", descriptor);
+  if (world_frame_id_.empty()) {
+    throw std::runtime_error("world_frame_id must not be empty.");
   }
 
   // Encoder parameters
@@ -133,13 +128,16 @@ PTv3Node::PTv3Node(const rclcpp::NodeOptions & options) : Node("ptv3", options)
   // Detection head parameters
   const bool use_det3d_head = this->declare_parameter<bool>("detection3d.use_head", descriptor);
   std::optional<tensorrt_common::TrtCommonConfig> det3d_head_trt_config;
-  std::vector<float> bbox_voxel_size;
   std::vector<float> distance_bin_upper_limits;
   std::vector<float> detection_score_thresholds;
-  std::vector<float> yaw_norm_thresholds;
-  perception_utils::IouBevNmsParams nms_params;
-  std::size_t num_proposals{};
-  std::vector<float> post_center_range;
+  std::int64_t num_anchor{};
+  std::int64_t num_temp_instances{};
+  std::int64_t embed_dims{};
+  float default_time_interval{};
+  float max_time_interval{};
+  float track_birth_score{};
+  std::vector<std::int64_t> circle_nms_class_groups;
+  std::vector<float> circle_nms_radii;
   if (use_det3d_head) {
     const std::string det3d_head_onnx_path =
       this->declare_parameter<std::string>("detection3d.onnx_path", descriptor);
@@ -149,9 +147,20 @@ PTv3Node::PTv3Node(const rclcpp::NodeOptions & options) : Node("ptv3", options)
 
     detection_class_names_ =
       this->declare_parameter<std::vector<std::string>>("detection3d.class_names", descriptor);
-    bbox_voxel_size = to_float_vector(
-      this->declare_parameter<std::vector<double>>("detection3d.bbox_voxel_size", descriptor));
-    has_twist_ = this->declare_parameter<bool>("detection3d.has_twist", descriptor);
+    num_anchor = this->declare_parameter<std::int64_t>("detection3d.num_anchor", descriptor);
+    num_temp_instances =
+      this->declare_parameter<std::int64_t>("detection3d.num_temp_instances", descriptor);
+    embed_dims = this->declare_parameter<std::int64_t>("detection3d.embed_dims", descriptor);
+    default_time_interval = static_cast<float>(
+      this->declare_parameter<double>("detection3d.default_time_interval", descriptor));
+    max_time_interval = static_cast<float>(
+      this->declare_parameter<double>("detection3d.max_time_interval", descriptor));
+    track_birth_score = static_cast<float>(
+      this->declare_parameter<double>("detection3d.track_birth_score", descriptor));
+    circle_nms_class_groups = this->declare_parameter<std::vector<std::int64_t>>(
+      "detection3d.circle_nms.class_groups", descriptor);
+    circle_nms_radii = to_float_vector(
+      this->declare_parameter<std::vector<double>>("detection3d.circle_nms.radii", descriptor));
 
     const auto allow_remapping_by_area_matrix = this->declare_parameter<std::vector<std::int64_t>>(
       "detection3d.allow_remapping_by_area_matrix", descriptor);
@@ -189,35 +198,25 @@ PTv3Node::PTv3Node(const rclcpp::NodeOptions & options) : Node("ptv3", options)
       }
     }
 
-    yaw_norm_thresholds = to_float_vector(this->declare_parameter<std::vector<double>>(
-      "detection3d.post_process_params.yaw_norm_thresholds", descriptor));
-
-    nms_params.search_distance_2d = this->declare_parameter<double>(
-      "detection3d.post_process_params.iou_nms_search_distance_2d", descriptor);
-    nms_params.iou_threshold = this->declare_parameter<double>(
-      "detection3d.post_process_params.iou_nms_threshold", descriptor);
-
-    const auto num_proposals_param =
-      this->declare_parameter<std::int64_t>("detection3d.num_proposals", descriptor);
-    if (num_proposals_param <= 0) {
-      throw std::runtime_error("detection3d.num_proposals must be positive.");
-    }
-    num_proposals = static_cast<std::size_t>(num_proposals_param);
-    post_center_range = to_float_vector(
-      this->declare_parameter<std::vector<double>>("detection3d.post_center_range", descriptor));
-
     det3d_head_trt_config.emplace(
       det3d_head_onnx_path, trt_precision, det3d_head_engine_path, det3d_head_workspace_size);
   }
 
   PTv3Config config(
-    use_seg3d_head, use_det3d_head, plugins_path, cloud_capacity, densification_world_frame_id,
-    densification_num_past_frames, voxels_num, pooled_voxels_num_max, point_cloud_range, voxel_size,
-    max_points_per_voxel, segmentation_class_names, segmentation_class_mapping,
-    serialization_orders, pooling_strides, enc_channels, patch_sizes, palette, filter_classes,
-    filter_output_format, filter_apply_to_segmentation, source_reconstruction, dec_depths,
-    detection_class_names_, bbox_voxel_size, distance_bin_upper_limits, detection_score_thresholds,
-    yaw_norm_thresholds, has_twist_, num_proposals, post_center_range);
+    use_seg3d_head, use_det3d_head, plugins_path, cloud_capacity, voxels_num, pooled_voxels_num_max,
+    point_cloud_range, voxel_size, max_points_per_voxel, segmentation_class_names,
+    segmentation_class_mapping, serialization_orders, pooling_strides, enc_channels, patch_sizes,
+    palette, filter_classes, filter_output_format, filter_apply_to_segmentation,
+    source_reconstruction, dec_depths, detection_class_names_, distance_bin_upper_limits,
+    detection_score_thresholds, num_anchor, num_temp_instances, embed_dims, default_time_interval,
+    max_time_interval, track_birth_score, circle_nms_class_groups, circle_nms_radii);
+
+  // The detection memory is carried with the ego motion. Without it every frame stands alone and
+  // needs no pose.
+  if (use_det3d_head) {
+    tf_buffer_.emplace(this->get_clock());
+    tf_listener_.emplace(*tf_buffer_);
+  }
 
   const auto encoder_trt_config = tensorrt_common::TrtCommonConfig(
     encoder_onnx_path, trt_precision, encoder_engine_path, encoder_workspace_size);
@@ -256,7 +255,11 @@ PTv3Node::PTv3Node(const rclcpp::NodeOptions & options) : Node("ptv3", options)
   if (use_det3d_head) {
     detected_objects_pub_ = this->create_publisher<autoware_perception_msgs::msg::DetectedObjects>(
       "~/output/objects", rclcpp::QoS{1});
-    iou_bev_nms_.setParameters(nms_params);
+    tracked_objects_pub_ = this->create_publisher<autoware_perception_msgs::msg::TrackedObjects>(
+      "~/output/tracked_objects", rclcpp::QoS{1});
+    // Track ids restart with the node, the session keeps the object ids of every run apart
+    std::random_device random_device;
+    session_id_ = (static_cast<std::uint64_t>(random_device()) << 32U) | random_device();
   }
 
   published_time_pub_ = std::make_unique<autoware_utils::PublishedTimePublisher>(this);
@@ -301,20 +304,16 @@ void PTv3Node::publishFilteredPointcloud(
   }
 }
 
-std::optional<Eigen::Affine3f> PTv3Node::lookupWorldToLidar(
-  const std_msgs::msg::Header & header) const
+std::optional<StampedEgoPose> PTv3Node::resolveEgoPose(const std_msgs::msg::Header & header) const
 {
-  // Without past frames every cached sweep is the current frame itself and the pose cancels out.
+  const double stamp_seconds = rclcpp::Time(header.stamp).seconds();
   if (!tf_buffer_) {
-    return Eigen::Affine3f::Identity();
+    return StampedEgoPose{stamp_seconds, Eigen::Isometry3d::Identity()};
   }
   try {
     const auto transform = tf_buffer_->lookupTransform(
-      header.frame_id, densification_world_frame_id_, header.stamp,
-      rclcpp::Duration::from_seconds(0.5));
-    Eigen::Affine3f affine;
-    affine.matrix() = tf2::transformToEigen(transform.transform).matrix().cast<float>();
-    return affine;
+      world_frame_id_, header.frame_id, header.stamp, rclcpp::Duration::from_seconds(0.5));
+    return StampedEgoPose{stamp_seconds, tf2::transformToEigen(transform.transform)};
   } catch (const tf2::TransformException & exception) {
     RCLCPP_WARN_STREAM(get_logger(), exception.what());
     return std::nullopt;
@@ -337,10 +336,12 @@ void PTv3Node::cloudCallback(
     filtered_pointcloud_pub_ ? (filtered_pointcloud_pub_->get_subscription_count() +
                                 filtered_pointcloud_pub_->get_intra_process_subscription_count())
                              : 0u;
-  const auto objects_sub_count = detected_objects_pub_
-                                   ? (detected_objects_pub_->get_subscription_count() +
-                                      detected_objects_pub_->get_intra_process_subscription_count())
-                                   : 0u;
+  const auto objects_sub_count =
+    detected_objects_pub_ ? (detected_objects_pub_->get_subscription_count() +
+                             detected_objects_pub_->get_intra_process_subscription_count() +
+                             tracked_objects_pub_->get_subscription_count() +
+                             tracked_objects_pub_->get_intra_process_subscription_count())
+                          : 0u;
 
   if (segmented_sub_count + visualization_sub_count + filtered_sub_count + objects_sub_count == 0) {
     return;
@@ -352,33 +353,20 @@ void PTv3Node::cloudCallback(
 
   std::unordered_map<std::string, double> proc_timing;
   std::optional<std::vector<Box3D>> det_boxes3d;
-  const auto affine_world2current = lookupWorldToLidar(msg_ptr->header);
-  if (!affine_world2current) {
+  const auto ego_pose = resolveEgoPose(msg_ptr->header);
+  if (!ego_pose) {
     RCLCPP_WARN(get_logger(), "The world transform is unavailable. Skipping inference.");
     return;
   }
   bool is_success = model_ptr_->infer(
-    msg_ptr, *affine_world2current, segmented_sub_count, visualization_sub_count,
-    filtered_sub_count, objects_sub_count > 0u, det_boxes3d, proc_timing);
+    msg_ptr, *ego_pose, segmented_sub_count, visualization_sub_count, filtered_sub_count,
+    objects_sub_count > 0u, det_boxes3d, proc_timing);
   if (!is_success) {
     return;
   }
 
-  if (objects_sub_count > 0u && detected_objects_pub_ && det_boxes3d.has_value()) {
-    std::vector<autoware_perception_msgs::msg::DetectedObject> raw_objects;
-    raw_objects.reserve(det_boxes3d->size());
-    for (const auto & box3d : *det_boxes3d) {
-      autoware_perception_msgs::msg::DetectedObject object;
-      box3d_to_detected_object(box3d, detection_class_names_, has_twist_, object);
-      raw_objects.emplace_back(std::move(object));
-    }
-
-    autoware_perception_msgs::msg::DetectedObjects output_msg;
-    output_msg.header = msg_ptr->header;
-    output_msg.objects = iou_bev_nms_.apply(raw_objects);
-    detection_class_remapper_.mapClasses(output_msg);
-    detected_objects_pub_->publish(output_msg);
-    published_time_pub_->publish_if_subscribed(detected_objects_pub_, output_msg.header.stamp);
+  if (det_boxes3d.has_value()) {
+    publishObjects(msg_ptr->header, *det_boxes3d);
   }
 
   // add processing time for debug
@@ -400,6 +388,33 @@ void PTv3Node::cloudCallback(
         topic, time_ms);
     }
   }
+}
+
+void PTv3Node::publishObjects(
+  const std_msgs::msg::Header & header, const std::vector<Box3D> & boxes)
+{
+  autoware_perception_msgs::msg::DetectedObjects detected_msg;
+  detected_msg.header = header;
+  detected_msg.objects.resize(boxes.size());
+  for (std::size_t index = 0; index < boxes.size(); ++index) {
+    box3d_to_detected_object(boxes[index], detection_class_names_, detected_msg.objects[index]);
+  }
+  detection_class_remapper_.mapClasses(detected_msg);
+
+  // Every instance holding a track is published again under its track id
+  autoware_perception_msgs::msg::TrackedObjects tracked_msg;
+  tracked_msg.header = header;
+  for (std::size_t index = 0; index < boxes.size(); ++index) {
+    if (boxes[index].track_id >= 0) {
+      tracked_msg.objects.push_back(detected_object_to_tracked_object(
+        detected_msg.objects[index], track_uuid(session_id_, boxes[index].track_id)));
+    }
+  }
+
+  detected_objects_pub_->publish(detected_msg);
+  tracked_objects_pub_->publish(tracked_msg);
+  published_time_pub_->publish_if_subscribed(detected_objects_pub_, header.stamp);
+  published_time_pub_->publish_if_subscribed(tracked_objects_pub_, header.stamp);
 }
 
 }  // namespace autoware::ptv3

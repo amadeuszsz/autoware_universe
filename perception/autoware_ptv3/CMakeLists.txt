@@ -78,9 +78,8 @@ if(TRT_AVAIL AND CUDA_AVAIL)
 
   cuda_add_library(${PROJECT_NAME}_cuda_lib SHARED
     lib/postprocess/postprocess_kernel.cu
-    lib/postprocess/detection3d_postprocess.cu
+    lib/preprocess/point_feature_kernel.cu
     lib/preprocess/preprocess_kernel.cu
-    lib/preprocess/sweep_kernel.cu
   )
 
   target_include_directories(${PROJECT_NAME}_cuda_lib
@@ -88,7 +87,6 @@ if(TRT_AVAIL AND CUDA_AVAIL)
     ${autoware_cuda_utils_INCLUDE_DIRS}
   )
 
-  # detection3d_postprocess_test needs this: it host-compiles Thrust and gets no ament_target_dependencies.
   target_link_libraries(${PROJECT_NAME}_cuda_lib
     autoware_cuda_utils::autoware_cuda_utils
   )
@@ -98,8 +96,9 @@ if(TRT_AVAIL AND CUDA_AVAIL)
   )
 
   ament_auto_add_library(${PROJECT_NAME}_lib SHARED
-    lib/preprocess/pointcloud_densification.cpp
-    lib/preprocess/sweep_aggregator.cpp
+    lib/detection3d_temporal_state.cpp
+    lib/postprocess/detection3d_postprocess.cpp
+    lib/postprocess/instance_tracker.cpp
     lib/ptv3_trt.cpp
     lib/ros_utils.cpp
   )
@@ -173,11 +172,11 @@ if(TRT_AVAIL AND CUDA_AVAIL)
       ${PROJECT_NAME}_cuda_lib
     )
 
-    ament_add_gtest(test_sweep_kernel
-      test/test_sweep_kernel.cpp
+    ament_add_gtest(test_point_feature_kernel
+      test/test_point_feature_kernel.cpp
     )
 
-    target_link_libraries(test_sweep_kernel
+    target_link_libraries(test_point_feature_kernel
       CUDA::cudart
       ${PROJECT_NAME}_cuda_lib
     )
@@ -201,8 +200,24 @@ if(TRT_AVAIL AND CUDA_AVAIL)
     )
 
     target_link_libraries(detection3d_postprocess_test
+      ${PROJECT_NAME}_lib
+    )
+
+    ament_add_gtest(instance_tracker_test
+      test/instance_tracker_test.cpp
+    )
+
+    target_link_libraries(instance_tracker_test
+      ${PROJECT_NAME}_lib
+    )
+
+    ament_add_gtest(detection3d_temporal_state_test
+      test/detection3d_temporal_state_test.cpp
+    )
+
+    target_link_libraries(detection3d_temporal_state_test
       CUDA::cudart
-      ${PROJECT_NAME}_cuda_lib
+      ${PROJECT_NAME}_lib
     )
 
     ament_add_ros_isolated_gtest(ros_utils_test

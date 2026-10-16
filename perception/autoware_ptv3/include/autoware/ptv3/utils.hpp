@@ -15,13 +15,16 @@
 #ifndef AUTOWARE__PTV3__UTILS_HPP_
 #define AUTOWARE__PTV3__UTILS_HPP_
 
+#include <cstdint>
 #include <stdexcept>
 
 namespace autoware::ptv3
 {
 
 /**
- * @brief Box record shared by CUDA decode and ROS conversion.
+ * @brief Box of one detection query, shared by the decoding, the tracking and the ROS conversion.
+ *
+ * The center is the box center, the velocity is expressed in the lidar frame.
  */
 struct Box3D
 {
@@ -36,6 +39,7 @@ struct Box3D
   float yaw{0.0f};
   float vel_x{0.0f};
   float vel_y{0.0f};
+  std::int64_t track_id{-1};  // -1 when the query holds no track
 };
 
 // cspell: ignore divup

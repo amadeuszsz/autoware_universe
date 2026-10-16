@@ -41,9 +41,7 @@ struct PTv3ConfigParams
   bool use_seg3d_head = true;
   bool use_det3d_head = false;
   std::string plugins_path = "";
-  std::int64_t cloud_capacity = 8;
-  std::string densification_world_frame_id = "map";
-  std::int64_t densification_num_past_frames = 1;
+  std::int64_t cloud_capacity = 16;
   std::vector<std::int64_t> voxels_num = {1, 4, 8};
   std::vector<std::int64_t> pooled_voxels_num_max = {8, 8};
   std::vector<float> point_cloud_range = {-1.0F, -1.0F, -1.0F, 3.0F, 3.0F, 3.0F};
@@ -63,13 +61,16 @@ struct PTv3ConfigParams
   std::string source_reconstruction = "partial";
   std::vector<std::int64_t> dec_depths = {0, 0};
   std::vector<std::string> detection_class_names = {"CAR", "PEDESTRIAN"};
-  std::vector<float> bbox_voxel_size = {2.0F, 2.0F, 4.0F};
   std::vector<float> distance_bin_upper_limits = {10.0F, 20.0F};
   std::vector<float> detection_score_thresholds = {0.1F, 0.2F, 0.3F, 0.4F};
-  std::vector<float> yaw_norm_thresholds = {0.1F, 0.2F};
-  bool has_twist = true;
-  std::size_t num_proposals = 8;
-  std::vector<float> post_center_range = {-2.0F, -2.0F, -2.0F, 4.0F, 4.0F, 4.0F};
+  std::int64_t num_anchor = 8;
+  std::int64_t num_temp_instances = 4;
+  std::int64_t embed_dims = 16;
+  float default_time_interval = 0.1F;
+  float max_time_interval = 2.0F;
+  float track_birth_score = 0.2F;
+  std::vector<std::int64_t> circle_nms_class_groups = {-1, 0};
+  std::vector<float> circle_nms_radii = {0.5F};
 };
 
 // Host reimplementation of the device-side serialized (Morton / Z-order) encoding. `transposed`
@@ -92,15 +93,15 @@ inline PTv3Config makeConfig(const PTv3ConfigParams & params = {})
 {
   return PTv3Config(
     params.use_seg3d_head, params.use_det3d_head, params.plugins_path, params.cloud_capacity,
-    params.densification_world_frame_id, params.densification_num_past_frames, params.voxels_num,
-    params.pooled_voxels_num_max, params.point_cloud_range, params.voxel_size,
+    params.voxels_num, params.pooled_voxels_num_max, params.point_cloud_range, params.voxel_size,
     params.max_points_per_voxel, params.segmentation_class_names, params.segmentation_class_mapping,
     params.serialization_orders, params.pooling_strides, params.enc_channels, params.patch_sizes,
     params.palette, params.filter_classes, params.filter_output_format,
     params.filter_apply_to_segmentation, params.source_reconstruction, params.dec_depths,
-    params.detection_class_names, params.bbox_voxel_size, params.distance_bin_upper_limits,
-    params.detection_score_thresholds, params.yaw_norm_thresholds, params.has_twist,
-    params.num_proposals, params.post_center_range);
+    params.detection_class_names, params.distance_bin_upper_limits,
+    params.detection_score_thresholds, params.num_anchor, params.num_temp_instances,
+    params.embed_dims, params.default_time_interval, params.max_time_interval,
+    params.track_birth_score, params.circle_nms_class_groups, params.circle_nms_radii);
 }
 
 // Base fixture for all autoware_ptv3 CUDA unit tests: owns a CUDA stream and the

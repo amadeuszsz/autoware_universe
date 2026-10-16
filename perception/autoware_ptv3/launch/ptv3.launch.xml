@@ -5,6 +5,7 @@
   <arg name="output/pointcloud/visualization" default="~/visualization"/>
   <arg name="output/pointcloud/filtered" default="~/filtered"/>
   <arg name="output/objects" default="~/objects"/>
+  <arg name="output/tracked_objects" default="~/tracked_objects"/>
 
   <arg name="data_path" default="$(env HOME)/autoware_data/ml_models" description="packages data and artifacts directory path"/>
   <arg name="model_path" default="$(var data_path)/ptv3"/>
@@ -37,6 +38,7 @@
         <remap from="~/output/pointcloud/filtered" to="$(var output/pointcloud/filtered)"/>
         <remap from="~/output/pointcloud/filtered/cuda" to="$(var output/pointcloud/filtered)/cuda"/>
         <remap from="~/output/objects" to="$(var output/objects)"/>
+        <remap from="~/output/tracked_objects" to="$(var output/tracked_objects)"/>
         <param from="$(var model_param_path)" allow_substs="true"/>
         <param from="$(var encoder_ml_package_param_path)"/>
         <param from="$(var seg3d_head_ml_package_param_path)"/>
@@ -58,6 +60,7 @@
       <remap from="~/output/pointcloud/filtered" to="$(var output/pointcloud/filtered)"/>
       <remap from="~/output/pointcloud/filtered/cuda" to="$(var output/pointcloud/filtered)/cuda/dummy"/>
       <remap from="~/output/objects" to="$(var output/objects)"/>
+      <remap from="~/output/tracked_objects" to="$(var output/tracked_objects)"/>
       <param from="$(var model_param_path)" allow_substs="true"/>
       <param from="$(var encoder_ml_package_param_path)"/>
       <param from="$(var seg3d_head_ml_package_param_path)"/>

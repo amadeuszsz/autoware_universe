@@ -27,6 +27,7 @@
   <depend>rclcpp_components</depend>
   <depend>tf2_eigen</depend>
   <depend>tf2_ros</depend>
+  <depend>unique_identifier_msgs</depend>
 
   <exec_depend>autoware_tensorrt_plugins</exec_depend>
 

@@ -30,63 +30,46 @@ namespace autoware::ptv3
 using autoware::point_types::PointCloudClassification;
 
 // The voxel codes are radix-sorted stably over ascending original indices, so a voxel's first
-// point is its lowest one; the current sweep leads the densified cloud, hence this test.
-__device__ std::int64_t sourcePointIndex(std::uint32_t idx, VoxelPointMapping mapping)
+// point is its lowest one.
+__device__ std::uint32_t sourcePointIndex(std::uint32_t idx, VoxelPointMapping mapping)
 {
   if (mapping.voxel_starts == nullptr) return idx;
-  const auto source_idx = mapping.sorted_point_indices[mapping.voxel_starts[idx]];
-  return source_idx < mapping.num_current_points ? static_cast<std::int64_t>(source_idx) : -1;
+  return mapping.sorted_point_indices[mapping.voxel_starts[idx]];
 }
 
-/// Marks the rows an output cloud publishes; a prefix sum over the mask preserves their order.
-__global__ void markVoxelKeepKernel(
-  std::uint32_t * __restrict__ keep_mask, std::size_t num_points, VoxelPointMapping voxel_mapping)
-{
-  const auto idx = static_cast<std::uint32_t>(blockIdx.x * blockDim.x + threadIdx.x);
-  if (idx >= num_points) {
-    return;
-  }
-  keep_mask[idx] = sourcePointIndex(idx, voxel_mapping) < 0 ? 0U : 1U;
-}
-
-/// Drops past-only voxels and the predicted classes the segmentation filter removes.
+/// Drops the predicted classes the segmentation filter removes, a prefix sum over the mask
+/// preserves the order of the kept rows.
 __global__ void markSegmentationKeepKernel(
   const std::int64_t * __restrict__ labels, const std::uint32_t * __restrict__ filter_class_indices,
   std::size_t num_filter_classes, std::size_t num_classes, std::uint32_t * __restrict__ keep_mask,
-  std::size_t num_points, VoxelPointMapping voxel_mapping)
+  std::size_t num_points)
 {
   const auto idx = static_cast<std::uint32_t>(blockIdx.x * blockDim.x + threadIdx.x);
   if (idx >= num_points) {
     return;
   }
 
-  bool keep = sourcePointIndex(idx, voxel_mapping) >= 0;
-  if (keep) {
-    const auto label = labels[idx];
-    if (label >= 0 && static_cast<std::size_t>(label) < num_classes) {
-      for (std::size_t i = 0; i < num_filter_classes; ++i) {
-        if (filter_class_indices[i] == static_cast<std::uint32_t>(label)) {
-          keep = false;
-          break;
-        }
+  bool keep = true;
+  const auto label = labels[idx];
+  if (label >= 0 && static_cast<std::size_t>(label) < num_classes) {
+    for (std::size_t i = 0; i < num_filter_classes; ++i) {
+      if (filter_class_indices[i] == static_cast<std::uint32_t>(label)) {
+        keep = false;
+        break;
       }
     }
   }
   keep_mask[idx] = keep ? 1U : 0U;
 }
 
-/// Drops past-only voxels and the rows whose most likely class the filter removes.
+/// Drops the rows whose most likely class the filter removes.
 __global__ void markFilteredKeepKernel(
   const float * __restrict__ pred_probs, const std::uint32_t * __restrict__ filter_class_indices,
   std::size_t num_filter_classes, std::size_t num_classes, std::uint32_t * __restrict__ keep_mask,
-  std::size_t num_points, VoxelPointMapping voxel_mapping)
+  std::size_t num_points)
 {
   const auto idx = static_cast<std::uint32_t>(blockIdx.x * blockDim.x + threadIdx.x);
   if (idx >= num_points) {
-    return;
-  }
-  if (sourcePointIndex(idx, voxel_mapping) < 0) {
-    keep_mask[idx] = 0U;
     return;
   }
 
@@ -113,11 +96,10 @@ __global__ void markFilteredKeepKernel(
 __global__ void createVisualizationPointcloudKernel(
   const float * input_features, std::int64_t feature_stride, const float * colors,
   const std::int64_t * labels, float4 * output_points, std::size_t num_classes,
-  std::size_t num_points, const std::uint32_t * __restrict__ keep_mask,
-  const std::uint32_t * __restrict__ output_offsets)
+  std::size_t num_points)
 {
   const auto idx = static_cast<std::uint32_t>(blockIdx.x * blockDim.x + threadIdx.x);
-  if (idx >= num_points || keep_mask[idx] == 0U) {
+  if (idx >= num_points) {
     return;
   }
 
@@ -126,8 +108,7 @@ __global__ void createVisualizationPointcloudKernel(
     label >= 0 && static_cast<std::size_t>(label) < num_classes ? colors[label] : 0.0f;
 
   const float * input_point = &input_features[idx * feature_stride];
-  output_points[output_offsets[idx] - 1U] =
-    make_float4(input_point[0], input_point[1], input_point[2], color);
+  output_points[idx] = make_float4(input_point[0], input_point[1], input_point[2], color);
 }
 
 __global__ void createSegmentationPointcloudKernel(
@@ -407,32 +388,22 @@ std::size_t PostprocessCuda::readOutputCount(std::size_t num_points)
   return num_output_points;
 }
 
-std::size_t PostprocessCuda::createVisualizationPointcloud(
+void PostprocessCuda::createVisualizationPointcloud(
   const float * input_features, const std::int64_t feature_stride, const std::int64_t * labels,
-  float * output_points, std::size_t num_classes, std::size_t num_points,
-  VoxelPointMapping voxel_mapping)
+  float * output_points, std::size_t num_classes, std::size_t num_points)
 {
-  if (num_points == 0) return 0;
-  checkOutputCapacity(num_points);
+  if (num_points == 0) return;
   const auto num_blocks = divup(num_points, config_.threads_per_block_);
-
-  markVoxelKeepKernel<<<num_blocks, config_.threads_per_block_, 0, stream_>>>(
-    keep_mask_d_.get(), num_points, voxel_mapping);
-  CHECK_CUDA_ERROR(cudaPeekAtLastError());
-  scanKeepMask(num_points);
-
   createVisualizationPointcloudKernel<<<num_blocks, config_.threads_per_block_, 0, stream_>>>(
     input_features, feature_stride, color_map_d_.get(), labels,
-    reinterpret_cast<float4 *>(output_points), num_classes, num_points, keep_mask_d_.get(),
-    output_offsets_d_.get());
+    reinterpret_cast<float4 *>(output_points), num_classes, num_points);
   CHECK_CUDA_ERROR(cudaPeekAtLastError());
-  return readOutputCount(num_points);
 }
 
 std::size_t PostprocessCuda::createSegmentationPointcloud(
   const float * input_features, const std::int64_t feature_stride, const std::int64_t * pred_labels,
   const float * pred_probs, point_types::PointXYZCPE * output_points, std::size_t num_classes,
-  std::size_t num_points, VoxelPointMapping voxel_mapping)
+  std::size_t num_points)
 {
   if (num_points == 0) return 0;
   checkOutputCapacity(num_points);
@@ -442,7 +413,7 @@ std::size_t PostprocessCuda::createSegmentationPointcloud(
 
   markSegmentationKeepKernel<<<num_blocks, config_.threads_per_block_, 0, stream_>>>(
     pred_labels, filter_class_indices_d_.get(), num_filter_classes, num_classes, keep_mask_d_.get(),
-    num_points, voxel_mapping);
+    num_points);
   CHECK_CUDA_ERROR(cudaPeekAtLastError());
   scanKeepMask(num_points);
 
@@ -495,7 +466,7 @@ std::size_t PostprocessCuda::createFilteredPointcloud(
 
   markFilteredKeepKernel<<<num_blocks, config_.threads_per_block_, 0, stream_>>>(
     pred_probs, filter_class_indices_d_.get(), config_.filter_class_indices_.size(), num_classes,
-    keep_mask_d_.get(), num_points, voxel_mapping);
+    keep_mask_d_.get(), num_points);
   CHECK_CUDA_ERROR(cudaPeekAtLastError());
   scanKeepMask(num_points);
 

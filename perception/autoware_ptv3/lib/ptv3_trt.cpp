@@ -14,12 +14,14 @@
 
 #include "autoware/ptv3/ptv3_trt.hpp"
 
+#include "autoware/ptv3/preprocess/point_feature_kernel.hpp"
 #include "autoware/ptv3/preprocess/point_type.hpp"
 #include "autoware/ptv3/preprocess/preprocess_kernel.hpp"
 #include "autoware/ptv3/ptv3_config.hpp"
 
 #include <autoware/cuda_utils/cuda_unique_ptr.hpp>
 #include <autoware/cuda_utils/cuda_utils.hpp>
+#include <autoware/point_types/memory.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include <sensor_msgs/msg/point_field.hpp>
@@ -60,6 +62,27 @@ std::string poolingClusterName(const std::size_t stage_index)
 std::string stageGridCoordName(const std::size_t stage_index)
 {
   return "point_grid_coord_" + std::to_string(stage_index);
+}
+
+CloudFormat detectCloudFormat(const cuda_blackboard::CudaPointCloud2 & cloud)
+{
+  const auto & fields = cloud.fields;
+  const auto num_fields = fields.size();
+
+  if (num_fields == 10 && point_types::is_data_layout_compatible_with_point_xyzircaedt(fields)) {
+    return CloudFormat::XYZIRCAEDT;
+  }
+  if (num_fields == 9 && point_types::is_data_layout_compatible_with_point_xyziradrt(fields)) {
+    return CloudFormat::XYZIRADRT;
+  }
+  if (num_fields == 6 && point_types::is_data_layout_compatible_with_point_xyzirc(fields)) {
+    return CloudFormat::XYZIRC;
+  }
+  if (num_fields == 4 && point_types::is_data_layout_compatible_with_point_xyzi(fields)) {
+    return CloudFormat::XYZI;
+  }
+
+  return CloudFormat::UNKNOWN;
 }
 
 }  // namespace
@@ -170,6 +193,8 @@ PTv3TRT::~PTv3TRT()
 
 void PTv3TRT::initPtr()
 {
+  point_features_d_ = autoware::cuda_utils::make_unique<float[]>(
+    config_.cloud_capacity_ * config_.num_point_feature_size_);
   voxels_d_ = autoware::cuda_utils::make_unique<float[]>(
     config_.max_num_voxels_ * config_.max_points_per_voxel_ * config_.num_point_feature_size_);
   num_points_per_voxel_d_ =
@@ -196,10 +221,7 @@ void PTv3TRT::initPtr()
         config_.cloud_capacity_ * sizeof(CloudPointTypeXYZIRCAEDT));
     }
     if (config_.source_reconstruction_ != SourceReconstruction::NONE) {
-      // The inverse map covers every cropped point of the densified cloud; the reconstructed
-      // outputs cover only the published current frame.
-      inverse_map_d_ =
-        autoware::cuda_utils::make_unique<std::int64_t[]>(config_.densified_cloud_capacity_);
+      inverse_map_d_ = autoware::cuda_utils::make_unique<std::int64_t[]>(config_.cloud_capacity_);
       reconstructed_labels_d_ =
         autoware::cuda_utils::make_unique<std::int64_t[]>(config_.cloud_capacity_);
       reconstructed_probs_d_ = autoware::cuda_utils::make_unique<float[]>(
@@ -207,28 +229,30 @@ void PTv3TRT::initPtr()
     }
   }
 
-  // Detection head output buffers.
+  // Detection head output buffers and the instance memory.
   if (config_.use_det3d_head_) {
-    const auto det_grid_size = config_.det_grid_x_size_ * config_.det_grid_y_size_;
-    const auto det_class_size = config_.detection_class_names_.size();
-
-    dense_heatmap_d_ = autoware::cuda_utils::make_unique<float[]>(det_grid_size * det_class_size);
-    query_heatmap_score_d_ =
-      autoware::cuda_utils::make_unique<float[]>(det_class_size * config_.num_proposals_);
-    query_labels_d_ = autoware::cuda_utils::make_unique<std::int64_t[]>(config_.num_proposals_);
-    heatmap_d_ =
-      autoware::cuda_utils::make_unique<float[]>(det_class_size * config_.num_proposals_);
-    center_d_ = autoware::cuda_utils::make_unique<float[]>(2 * config_.num_proposals_);
-    height_d_ = autoware::cuda_utils::make_unique<float[]>(config_.num_proposals_);
-    dim_d_ = autoware::cuda_utils::make_unique<float[]>(3 * config_.num_proposals_);
-    rot_d_ = autoware::cuda_utils::make_unique<float[]>(2 * config_.num_proposals_);
-    if (config_.has_twist_) {
-      vel_d_ = autoware::cuda_utils::make_unique<float[]>(2 * config_.num_proposals_);
-    }
-    detection3d_post_ptr_ = std::make_unique<Detection3DPostprocess>(config_, stream_);
+    const auto classification_size = config_.num_anchor_ * config_.detection_class_names_.size();
+    const auto prediction_size = config_.num_anchor_ * Detection3DPostprocess::anchor_dim;
+    const auto quality_size = config_.num_anchor_ * Detection3DPostprocess::quality_dim;
+    classification_d_ = autoware::cuda_utils::make_unique<float[]>(classification_size);
+    prediction_d_ = autoware::cuda_utils::make_unique<float[]>(prediction_size);
+    quality_d_ = autoware::cuda_utils::make_unique<float[]>(quality_size);
+    state_query_index_d_ =
+      autoware::cuda_utils::make_unique<std::int64_t[]>(config_.num_temp_instances_);
+    classification_h_ =
+      autoware::cuda_utils::make_unique_host<float[]>(classification_size, cudaHostAllocDefault);
+    prediction_h_ =
+      autoware::cuda_utils::make_unique_host<float[]>(prediction_size, cudaHostAllocDefault);
+    quality_h_ =
+      autoware::cuda_utils::make_unique_host<float[]>(quality_size, cudaHostAllocDefault);
+    state_query_index_h_ = autoware::cuda_utils::make_unique_host<std::int64_t[]>(
+      config_.num_temp_instances_, cudaHostAllocDefault);
+    detection3d_post_ptr_ = std::make_unique<Detection3DPostprocess>(config_);
+    detection3d_state_ptr_ = std::make_unique<Detection3DTemporalState>(config_, stream_);
+    instance_tracker_ptr_ = std::make_unique<InstanceTracker>(
+      config_.num_anchor_, config_.num_temp_instances_, config_.track_birth_score_);
   }
 
-  aggregator_ptr_ = std::make_unique<SweepAggregator>(config_, stream_);
   pre_ptr_ = std::make_unique<PreprocessCuda>(config_, stream_);
   if (config_.use_seg3d_head_) {
     post_ptr_ = std::make_unique<PostprocessCuda>(config_, stream_);
@@ -619,63 +643,74 @@ void PTv3TRT::initDetection3DHeadTrt(const tensorrt_common::TrtCommonConfig & tr
   std::vector<autoware::tensorrt_common::NetworkIO> network_io;
   std::vector<autoware::tensorrt_common::ProfileDims> profile_dims;
 
-  // Inputs: the two coarsest encoder stages plus the pooling metadata that fuses them
-  // (the batch offset is computed in-graph from the skip-stage feature shape).
+  // Inputs: the features and voxel coordinates of the encoder stages the head samples, plus the
+  // pooling clusters that link every stage to the next one. Every stage is offered as optional,
+  // the model declares the stages it reads.
+  const auto add_stage_io = [&network_io, &profile_dims](
+                              const std::string & name, const nvinfer1::Dims & io_dims,
+                              const nvinfer1::Dims & min_dims, const nvinfer1::Dims & opt_dims,
+                              const nvinfer1::Dims & max_dims, const nvinfer1::DataType data_type) {
+    network_io.emplace_back(name, io_dims, data_type, true);
+    profile_dims.emplace_back(name, min_dims, opt_dims, max_dims, true);
+  };
   const auto stage_count = config_.enc_channels_.size();
-  const auto skip_stage = stage_count - 2;
-  const auto deep_stage = stage_count - 1;
-  const auto skip_counts = config_.stage_profile_counts(skip_stage);
-  const auto deep_counts = config_.stage_profile_counts(deep_stage);
-  const auto skip_channels = config_.enc_channels_[skip_stage];
-  const auto deep_channels = config_.enc_channels_[deep_stage];
-
-  network_io.emplace_back(
-    stageFeatureName(skip_stage), nvinfer1::Dims{2, {-1, skip_channels}},
-    nvinfer1::DataType::kFLOAT);
-  profile_dims.emplace_back(
-    stageFeatureName(skip_stage), nvinfer1::Dims{2, {skip_counts[0], skip_channels}},
-    nvinfer1::Dims{2, {skip_counts[1], skip_channels}},
-    nvinfer1::Dims{2, {skip_counts[2], skip_channels}});
-
-  network_io.emplace_back(
-    stageFeatureName(deep_stage), nvinfer1::Dims{2, {-1, deep_channels}},
-    nvinfer1::DataType::kFLOAT);
-  profile_dims.emplace_back(
-    stageFeatureName(deep_stage), nvinfer1::Dims{2, {deep_counts[0], deep_channels}},
-    nvinfer1::Dims{2, {deep_counts[1], deep_channels}},
-    nvinfer1::Dims{2, {deep_counts[2], deep_channels}});
-
-  network_io.emplace_back(
-    poolingClusterName(skip_stage), nvinfer1::Dims{1, {-1}}, nvinfer1::DataType::kINT64);
-  profile_dims.emplace_back(
-    poolingClusterName(skip_stage), nvinfer1::Dims{1, {skip_counts[0]}},
-    nvinfer1::Dims{1, {skip_counts[1]}}, nvinfer1::Dims{1, {skip_counts[2]}});
-
-  network_io.emplace_back(
-    stageGridCoordName(skip_stage), nvinfer1::Dims{2, {-1, 3}}, nvinfer1::DataType::kINT32);
-  profile_dims.emplace_back(
-    stageGridCoordName(skip_stage), nvinfer1::Dims{2, {skip_counts[0], 3}},
-    nvinfer1::Dims{2, {skip_counts[1], 3}}, nvinfer1::Dims{2, {skip_counts[2], 3}});
-
-  const auto det_cls = static_cast<std::int64_t>(config_.detection_class_names_.size());
-  const auto gx = static_cast<std::int64_t>(config_.det_grid_x_size_);
-  const auto gy = static_cast<std::int64_t>(config_.det_grid_y_size_);
-  const auto np = static_cast<std::int64_t>(config_.num_proposals_);
-
-  network_io.emplace_back(
-    "dense_heatmap", nvinfer1::Dims{4, {1, det_cls, gy, gx}}, nvinfer1::DataType::kFLOAT);
-  network_io.emplace_back(
-    "query_heatmap_score", nvinfer1::Dims{3, {1, det_cls, np}}, nvinfer1::DataType::kFLOAT);
-  network_io.emplace_back("query_labels", nvinfer1::Dims{2, {1, np}}, nvinfer1::DataType::kINT64);
-  network_io.emplace_back(
-    "heatmap", nvinfer1::Dims{3, {1, det_cls, np}}, nvinfer1::DataType::kFLOAT);
-  network_io.emplace_back("center", nvinfer1::Dims{3, {1, 2, np}}, nvinfer1::DataType::kFLOAT);
-  network_io.emplace_back("height", nvinfer1::Dims{3, {1, 1, np}}, nvinfer1::DataType::kFLOAT);
-  network_io.emplace_back("dim", nvinfer1::Dims{3, {1, 3, np}}, nvinfer1::DataType::kFLOAT);
-  network_io.emplace_back("rot", nvinfer1::Dims{3, {1, 2, np}}, nvinfer1::DataType::kFLOAT);
-  if (config_.has_twist_) {
-    network_io.emplace_back("vel", nvinfer1::Dims{3, {1, 2, np}}, nvinfer1::DataType::kFLOAT);
+  for (std::size_t stage = 0; stage < stage_count; ++stage) {
+    const auto counts = config_.stage_profile_counts(stage);
+    const auto channels = config_.enc_channels_[stage];
+    add_stage_io(
+      stageFeatureName(stage), nvinfer1::Dims{2, {-1, channels}},
+      nvinfer1::Dims{2, {counts[0], channels}}, nvinfer1::Dims{2, {counts[1], channels}},
+      nvinfer1::Dims{2, {counts[2], channels}}, nvinfer1::DataType::kFLOAT);
+    add_stage_io(
+      stageGridCoordName(stage), nvinfer1::Dims{2, {-1, 3}}, nvinfer1::Dims{2, {counts[0], 3}},
+      nvinfer1::Dims{2, {counts[1], 3}}, nvinfer1::Dims{2, {counts[2], 3}},
+      nvinfer1::DataType::kINT32);
   }
+  for (std::size_t stage = 0; stage + 1 < stage_count; ++stage) {
+    const auto counts = config_.stage_profile_counts(stage);
+    add_stage_io(
+      poolingClusterName(stage), nvinfer1::Dims{1, {-1}}, nvinfer1::Dims{1, {counts[0]}},
+      nvinfer1::Dims{1, {counts[1]}}, nvinfer1::Dims{1, {counts[2]}}, nvinfer1::DataType::kINT64);
+  }
+
+  // The instance memory of the last frame and how the incoming frame relates to it
+  const auto num_classes = static_cast<std::int64_t>(config_.detection_class_names_.size());
+  const auto num_anchor = static_cast<std::int64_t>(config_.num_anchor_);
+  const auto num_temp = static_cast<std::int64_t>(config_.num_temp_instances_);
+  const auto embed_dims = static_cast<std::int64_t>(config_.embed_dims_);
+  const auto anchor_dim = static_cast<std::int64_t>(Detection3DPostprocess::anchor_dim);
+  const auto quality_dim = static_cast<std::int64_t>(Detection3DPostprocess::quality_dim);
+  const auto add_static_io = [&network_io](
+                               const char * name, const nvinfer1::Dims & dims,
+                               const nvinfer1::DataType data_type) {
+    network_io.emplace_back(name, dims, data_type);
+  };
+  add_static_io(
+    "temp_instance_feature", nvinfer1::Dims{3, {1, num_temp, embed_dims}},
+    nvinfer1::DataType::kFLOAT);
+  add_static_io(
+    "temp_anchor", nvinfer1::Dims{3, {1, num_temp, anchor_dim}}, nvinfer1::DataType::kFLOAT);
+  add_static_io("temp_confidence", nvinfer1::Dims{2, {1, num_temp}}, nvinfer1::DataType::kFLOAT);
+  add_static_io("temp_valid", nvinfer1::Dims{1, {1}}, nvinfer1::DataType::kFLOAT);
+  add_static_io("time_interval", nvinfer1::Dims{1, {1}}, nvinfer1::DataType::kFLOAT);
+  add_static_io("prev2current", nvinfer1::Dims{3, {1, 4, 4}}, nvinfer1::DataType::kFLOAT);
+
+  // Outputs: the last decoder layer of every query and the memory of the next frame
+  add_static_io(
+    "classification", nvinfer1::Dims{3, {1, num_anchor, num_classes}}, nvinfer1::DataType::kFLOAT);
+  add_static_io(
+    "prediction", nvinfer1::Dims{3, {1, num_anchor, anchor_dim}}, nvinfer1::DataType::kFLOAT);
+  add_static_io(
+    "quality", nvinfer1::Dims{3, {1, num_anchor, quality_dim}}, nvinfer1::DataType::kFLOAT);
+  add_static_io(
+    "temp_instance_feature_out", nvinfer1::Dims{3, {1, num_temp, embed_dims}},
+    nvinfer1::DataType::kFLOAT);
+  add_static_io(
+    "temp_anchor_out", nvinfer1::Dims{3, {1, num_temp, anchor_dim}}, nvinfer1::DataType::kFLOAT);
+  add_static_io(
+    "temp_confidence_out", nvinfer1::Dims{2, {1, num_temp}}, nvinfer1::DataType::kFLOAT);
+  add_static_io(
+    "temp_query_index_out", nvinfer1::Dims{2, {1, num_temp}}, nvinfer1::DataType::kINT64);
 
   detection3d_head_trt_ptr_ = std::make_unique<autoware::tensorrt_common::TrtCommon>(
     trt_config, std::make_shared<autoware::tensorrt_common::Profiler>(),
@@ -687,34 +722,38 @@ void PTv3TRT::initDetection3DHeadTrt(const tensorrt_common::TrtCommonConfig & tr
     throw std::runtime_error("Failed to setup Detection3D head TRT engine.");
   }
 
-  detection3d_head_trt_ptr_->setTensorAddress(
-    stageFeatureName(skip_stage).c_str(), stage_feat_d_[skip_stage].get());
-  detection3d_head_trt_ptr_->setTensorAddress(
-    stageFeatureName(deep_stage).c_str(), stage_feat_d_[deep_stage].get());
-  detection3d_head_trt_ptr_->setTensorAddress(
-    poolingClusterName(skip_stage).c_str(), serialized_pooling_stages_d_[skip_stage].cluster.get());
-  // Pooled coordinates of the skip stage are the previous pooling stage's grid_coord output;
-  // a two-stage encoder would fall back to the input voxel coordinates.
-  detection3d_head_trt_ptr_->setTensorAddress(
-    stageGridCoordName(skip_stage).c_str(),
-    skip_stage == 0 ? grid_coord_d_.get()
-                    : serialized_pooling_stages_d_[skip_stage - 1].grid_coord.get());
-  detection3d_head_trt_ptr_->setTensorAddress("dense_heatmap", dense_heatmap_d_.get());
-  detection3d_head_trt_ptr_->setTensorAddress("query_heatmap_score", query_heatmap_score_d_.get());
-  detection3d_head_trt_ptr_->setTensorAddress("query_labels", query_labels_d_.get());
-  detection3d_head_trt_ptr_->setTensorAddress("heatmap", heatmap_d_.get());
-  detection3d_head_trt_ptr_->setTensorAddress("center", center_d_.get());
-  detection3d_head_trt_ptr_->setTensorAddress("height", height_d_.get());
-  detection3d_head_trt_ptr_->setTensorAddress("dim", dim_d_.get());
-  detection3d_head_trt_ptr_->setTensorAddress("rot", rot_d_.get());
-  if (config_.has_twist_) {
-    detection3d_head_trt_ptr_->setTensorAddress("vel", vel_d_.get());
+  const auto bind = [this](const char * name, void * data) {
+    detection3d_head_trt_ptr_->setTensorAddress(name, data);
+  };
+  // The voxel coordinates of stage 0 are the encoder input ones, every deeper stage has the
+  // grid_coord output of the pooling that produced it.
+  for (std::size_t stage = 0; stage < stage_count; ++stage) {
+    bind(stageFeatureName(stage).c_str(), stage_feat_d_[stage].get());
+    bind(
+      stageGridCoordName(stage).c_str(),
+      stage == 0 ? grid_coord_d_.get() : serialized_pooling_stages_d_[stage - 1].grid_coord.get());
   }
+  for (std::size_t stage = 0; stage + 1 < stage_count; ++stage) {
+    bind(poolingClusterName(stage).c_str(), serialized_pooling_stages_d_[stage].cluster.get());
+  }
+  bind("temp_instance_feature", detection3d_state_ptr_->instanceFeatureIn());
+  bind("temp_anchor", detection3d_state_ptr_->anchorIn());
+  bind("temp_confidence", detection3d_state_ptr_->confidenceIn());
+  bind("temp_valid", detection3d_state_ptr_->validIn());
+  bind("time_interval", detection3d_state_ptr_->timeIntervalIn());
+  bind("prev2current", detection3d_state_ptr_->prev2currentIn());
+  bind("classification", classification_d_.get());
+  bind("prediction", prediction_d_.get());
+  bind("quality", quality_d_.get());
+  bind("temp_instance_feature_out", detection3d_state_ptr_->instanceFeatureOut());
+  bind("temp_anchor_out", detection3d_state_ptr_->anchorOut());
+  bind("temp_confidence_out", detection3d_state_ptr_->confidenceOut());
+  bind("temp_query_index_out", state_query_index_d_.get());
 }
 
 bool PTv3TRT::infer(
   const std::shared_ptr<const cuda_blackboard::CudaPointCloud2> & msg_ptr,
-  const Eigen::Affine3f & affine_world2current, bool should_publish_segmented_pointcloud,
+  const StampedEgoPose & ego_pose, bool should_publish_segmented_pointcloud,
   bool should_publish_visualization_pointcloud, bool should_publish_filtered_pointcloud,
   bool should_detect_objects, std::optional<std::vector<Box3D>> & det_boxes3d,
   std::unordered_map<std::string, double> & proc_timing)
@@ -727,8 +766,14 @@ bool PTv3TRT::infer(
      should_publish_filtered_pointcloud);
   const bool should_run_det3d = config_.use_det3d_head_ && should_detect_objects;
 
+  // The detection memory inputs of the frame are staged ahead of the encoder
+  bool det_continues_stream = false;
+  if (should_run_det3d) {
+    det_continues_stream = detection3d_state_ptr_->beginFrame(ego_pose);
+  }
+
   stop_watch_ptr_->toc("processing/inner", true);
-  if (!preProcess(msg_ptr, affine_world2current, should_run_seg3d)) {
+  if (!preProcess(msg_ptr, should_run_seg3d)) {
     RCLCPP_ERROR(rclcpp::get_logger("ptv3"), "Pre-process failed. Skipping inference.");
     return false;
   }
@@ -753,7 +798,10 @@ bool PTv3TRT::infer(
   }
   if (should_run_det3d) {
     det_ok = inferenceDetection3DHead();
-    if (!det_ok) {
+    if (det_ok) {
+      copyDetection3DOutputsToHost();
+      detection3d_state_ptr_->commitFrame();
+    } else {
       RCLCPP_ERROR(rclcpp::get_logger("ptv3"), "Det head inference failed.");
     }
   }
@@ -765,8 +813,8 @@ bool PTv3TRT::infer(
   if (seg_ok && should_run_seg3d) {
     if (
       postProcess(
-        msg_ptr->header, should_publish_segmented_pointcloud,
-        should_publish_visualization_pointcloud, should_publish_filtered_pointcloud)) {
+        msg_ptr, should_publish_segmented_pointcloud, should_publish_visualization_pointcloud,
+        should_publish_filtered_pointcloud)) {
       seg_post_ok = true;
     } else {
       RCLCPP_ERROR(rclcpp::get_logger("ptv3"), "Seg post-process failed.");
@@ -775,12 +823,9 @@ bool PTv3TRT::infer(
 
   if (det_ok && should_run_det3d) {
     std::vector<Box3D> detected_boxes;
-    if (postProcessDetection3D(detected_boxes)) {
-      det_boxes3d = std::move(detected_boxes);
-      det_post_ok = true;
-    } else {
-      RCLCPP_ERROR(rclcpp::get_logger("ptv3"), "Det post-process failed.");
-    }
+    postProcessDetection3D(det_continues_stream, detected_boxes);
+    det_boxes3d = std::move(detected_boxes);
+    det_post_ok = true;
   }
 
   proc_timing.emplace(
@@ -791,22 +836,40 @@ bool PTv3TRT::infer(
 
 bool PTv3TRT::preProcess(
   const std::shared_ptr<const cuda_blackboard::CudaPointCloud2> & msg_ptr,
-  const Eigen::Affine3f & affine_world2current, const bool should_run_seg3d)
+  const bool should_run_seg3d)
 {
   using autoware::cuda_utils::clear_async;
 
-  if (!aggregator_ptr_->enqueuePointCloud(msg_ptr, affine_world2current)) {
+  frame_format_ = detectCloudFormat(*msg_ptr);
+  if (frame_format_ == CloudFormat::UNKNOWN) {
+    RCLCPP_WARN_STREAM(
+      rclcpp::get_logger("ptv3"),
+      "Skipping a frame with an unsupported point cloud type. Expected one of: XYZIRCAEDT (10 "
+      "fields), XYZIRADRT (9 fields), XYZIRC (6 fields), or XYZI (4 fields).");
     return false;
   }
-  densified_cloud_ = aggregator_ptr_->aggregate();
 
-  if (densified_cloud_.num_current_points == 0) {
+  // The reconstruction buffers and output messages are sized per frame
+  num_frame_points_ = static_cast<std::int64_t>(msg_ptr->height) * msg_ptr->width;
+  if (num_frame_points_ > config_.cloud_capacity_) {
+    RCLCPP_WARN_STREAM(
+      rclcpp::get_logger("ptv3"),
+      "Skipping a frame of " << num_frame_points_ << " points; it exceeds the cloud capacity ("
+                             << config_.cloud_capacity_ << "). Increase cloud_capacity.");
+    return false;
+  }
+  if (num_frame_points_ == 0) {
     RCLCPP_ERROR(rclcpp::get_logger("ptv3"), "Empty pointcloud. Skipping inference.");
     return false;
   }
 
+  generatePointFeaturesLaunch(
+    msg_ptr->data.get(), frame_format_, static_cast<std::size_t>(num_frame_points_),
+    point_features_d_.get(), config_.threads_per_block_, stream_);
+  CHECK_CUDA_ERROR(cudaPeekAtLastError());
+
   std::call_once(init_cloud_, [this]() {
-    input_format_ = densified_cloud_.current_format;
+    input_format_ = frame_format_;
 
     const auto requested_output_format = parse_cloud_format_string(config_.filter_output_format_);
     filtered_output_format_ =
@@ -896,8 +959,7 @@ bool PTv3TRT::preProcess(
         stream_);
     }
     if (config_.source_reconstruction_ != SourceReconstruction::NONE) {
-      clear_async(
-        inverse_map_d_.get(), static_cast<std::size_t>(config_.densified_cloud_capacity_), stream_);
+      clear_async(inverse_map_d_.get(), static_cast<std::size_t>(config_.cloud_capacity_), stream_);
       clear_async(
         reconstructed_labels_d_.get(), static_cast<std::size_t>(config_.cloud_capacity_), stream_);
       clear_async(
@@ -909,20 +971,18 @@ bool PTv3TRT::preProcess(
   }
 
   std::size_t num_cropped_points = 0;
-  std::size_t num_cropped_current_points = 0;
   const bool should_reconstruct_source =
     should_run_seg3d && config_.source_reconstruction_ != SourceReconstruction::NONE;
   num_voxels_ = pre_ptr_->generateVoxels(
-    densified_cloud_.points, densified_cloud_.num_points, densified_cloud_.num_current_points,
-    voxels_d_.get(), num_points_per_voxel_d_.get(), grid_coord_d_.get(), serialized_code_d_.get(),
-    should_reconstruct_source ? inverse_map_d_.get() : nullptr, &num_cropped_points,
-    &num_cropped_current_points);
-  num_cropped_current_points_ = static_cast<std::int64_t>(num_cropped_current_points);
+    point_features_d_.get(), static_cast<std::size_t>(num_frame_points_), voxels_d_.get(),
+    num_points_per_voxel_d_.get(), grid_coord_d_.get(), serialized_code_d_.get(),
+    should_reconstruct_source ? inverse_map_d_.get() : nullptr, &num_cropped_points);
+  num_cropped_points_ = static_cast<std::int64_t>(num_cropped_points);
 
   if (should_run_seg3d && config_.source_reconstruction_ == SourceReconstruction::PARTIAL) {
-    pre_ptr_->extractCurrentSourcePoints(
-      densified_cloud_.current_msg->data.get(), densified_cloud_.current_format,
-      densified_cloud_.num_current_points, cropped_source_points_d_.get());
+    pre_ptr_->extractSourcePoints(
+      msg_ptr->data.get(), frame_format_, static_cast<std::size_t>(num_frame_points_),
+      cropped_source_points_d_.get());
   }
 
   if (num_voxels_ > config_.max_num_voxels_) {
@@ -1022,23 +1082,22 @@ bool PTv3TRT::inferenceSeg3dHead()
 
 bool PTv3TRT::inferenceDetection3DHead()
 {
+  // serialized_pooling_num_voxels_[s] is the voxel count of encoder stage s. The engine skips the
+  // shapes of the stages the model does not read.
   const auto stage_count = config_.enc_channels_.size();
-  const auto skip_stage = stage_count - 2;
-  const auto deep_stage = stage_count - 1;
-  const auto skip_count = serialized_pooling_num_voxels_[skip_stage];
-  const auto deep_count = serialized_pooling_num_voxels_[deep_stage];
-
   bool success = true;
-  success &= detection3d_head_trt_ptr_->setInputShape(
-    stageFeatureName(skip_stage).c_str(),
-    nvinfer1::Dims{2, {skip_count, config_.enc_channels_[skip_stage]}});
-  success &= detection3d_head_trt_ptr_->setInputShape(
-    stageFeatureName(deep_stage).c_str(),
-    nvinfer1::Dims{2, {deep_count, config_.enc_channels_[deep_stage]}});
-  success &= detection3d_head_trt_ptr_->setInputShape(
-    poolingClusterName(skip_stage).c_str(), nvinfer1::Dims{1, {skip_count}});
-  success &= detection3d_head_trt_ptr_->setInputShape(
-    stageGridCoordName(skip_stage).c_str(), nvinfer1::Dims{2, {skip_count, 3}});
+  for (std::size_t stage = 0; stage < stage_count; ++stage) {
+    const auto count = serialized_pooling_num_voxels_[stage];
+    success &= detection3d_head_trt_ptr_->setInputShape(
+      stageFeatureName(stage).c_str(), nvinfer1::Dims{2, {count, config_.enc_channels_[stage]}});
+    success &= detection3d_head_trt_ptr_->setInputShape(
+      stageGridCoordName(stage).c_str(), nvinfer1::Dims{2, {count, 3}});
+  }
+  for (std::size_t stage = 0; stage + 1 < stage_count; ++stage) {
+    success &= detection3d_head_trt_ptr_->setInputShape(
+      poolingClusterName(stage).c_str(),
+      nvinfer1::Dims{1, {serialized_pooling_num_voxels_[stage]}});
+  }
   if (!success) {
     RCLCPP_ERROR(rclcpp::get_logger("ptv3"), "Failed to set Detection3D head input shapes.");
     return false;
@@ -1051,31 +1110,28 @@ bool PTv3TRT::inferenceDetection3DHead()
 }
 
 bool PTv3TRT::postProcess(
-  const std_msgs::msg::Header & header, bool should_publish_segmented_pointcloud,
-  bool should_publish_visualization_pointcloud, bool should_publish_filtered_pointcloud)
+  const std::shared_ptr<const cuda_blackboard::CudaPointCloud2> & msg_ptr,
+  bool should_publish_segmented_pointcloud, bool should_publish_visualization_pointcloud,
+  bool should_publish_filtered_pointcloud)
 {
-  const auto num_current_points = static_cast<std::int64_t>(densified_cloud_.num_current_points);
-
-  // Segmentation outputs describe the current frame only. Current-frame points form the
-  // leading block of the densified cloud and of every crop-derived array, so bounding the
-  // reconstruction counts to the current frame publishes exactly the input frame's points.
+  const auto & header = msg_ptr->header;
   if (config_.source_reconstruction_ == SourceReconstruction::PARTIAL) {
     post_ptr_->reconstructPartial(
       inverse_map_d_.get(), pred_labels_d_.get(), pred_probs_d_.get(),
       reconstructed_labels_d_.get(), reconstructed_probs_d_.get(),
-      config_.segmentation_class_names_.size(), num_cropped_current_points_, num_voxels_);
+      config_.segmentation_class_names_.size(), num_cropped_points_, num_voxels_);
   }
   if (config_.source_reconstruction_ == SourceReconstruction::FULL) {
     post_ptr_->reconstructFull(
       pre_ptr_->cropMask(), pre_ptr_->cropIndices(), inverse_map_d_.get(), pred_labels_d_.get(),
       pred_probs_d_.get(), reconstructed_labels_d_.get(), reconstructed_probs_d_.get(),
-      config_.segmentation_class_names_.size(), num_current_points, num_voxels_);
+      config_.segmentation_class_names_.size(), num_frame_points_, num_voxels_);
   }
 
   // Without reconstruction the outputs sit at voxel level, positioned at each voxel's first
   // point (slot 0 of the padded voxel), hence the padded row stride.
   const auto source_features =
-    config_.source_reconstruction_ == SourceReconstruction::FULL      ? densified_cloud_.points
+    config_.source_reconstruction_ == SourceReconstruction::FULL      ? point_features_d_.get()
     : config_.source_reconstruction_ == SourceReconstruction::PARTIAL ? pre_ptr_->croppedFeatures()
                                                                       : voxels_d_.get();
   const auto source_feature_stride =
@@ -1089,21 +1145,21 @@ bool PTv3TRT::postProcess(
                               ? reconstructed_probs_d_.get()
                               : pred_probs_d_.get();
   const auto voxel_mapping = config_.source_reconstruction_ == SourceReconstruction::NONE
-                               ? pre_ptr_->voxelPointMapping(num_current_points)
+                               ? pre_ptr_->voxelPointMapping()
                                : VoxelPointMapping{};
   const void * source_points = config_.source_reconstruction_ == SourceReconstruction::PARTIAL
                                  ? cropped_source_points_d_.get()
-                                 : densified_cloud_.current_msg->data.get();
+                                 : msg_ptr->data.get();
   const auto num_source_output_points =
-    config_.source_reconstruction_ == SourceReconstruction::FULL      ? num_current_points
-    : config_.source_reconstruction_ == SourceReconstruction::PARTIAL ? num_cropped_current_points_
+    config_.source_reconstruction_ == SourceReconstruction::FULL      ? num_frame_points_
+    : config_.source_reconstruction_ == SourceReconstruction::PARTIAL ? num_cropped_points_
                                                                       : num_voxels_;
 
   if (should_publish_segmented_pointcloud) {
     const auto num_segmented_points = post_ptr_->createSegmentationPointcloud(
       source_features, source_feature_stride, source_labels, source_probs,
       reinterpret_cast<point_types::PointXYZCPE *>(segmented_points_msg_ptr_->data.get()),
-      config_.segmentation_class_names_.size(), num_source_output_points, voxel_mapping);
+      config_.segmentation_class_names_.size(), num_source_output_points);
     CHECK_CUDA_ERROR(cudaStreamSynchronize(stream_));
 
     segmented_points_msg_ptr_->header = header;
@@ -1116,13 +1172,13 @@ bool PTv3TRT::postProcess(
 
   // Visualization pointcloud
   if (should_publish_visualization_pointcloud) {
-    const auto num_visualization_points = post_ptr_->createVisualizationPointcloud(
+    post_ptr_->createVisualizationPointcloud(
       source_features, source_feature_stride, source_labels,
       reinterpret_cast<float *>(visualization_points_msg_ptr_->data.get()),
-      config_.segmentation_class_names_.size(), num_source_output_points, voxel_mapping);
+      config_.segmentation_class_names_.size(), num_source_output_points);
     CHECK_CUDA_ERROR(cudaStreamSynchronize(stream_));
     visualization_points_msg_ptr_->header = header;
-    visualization_points_msg_ptr_->width = static_cast<std::uint32_t>(num_visualization_points);
+    visualization_points_msg_ptr_->width = static_cast<std::uint32_t>(num_source_output_points);
     visualization_points_msg_ptr_->row_step =
       visualization_points_msg_ptr_->width * visualization_points_msg_ptr_->point_step;
     publish_visualization_pointcloud_(std::move(visualization_points_msg_ptr_));
@@ -1131,7 +1187,7 @@ bool PTv3TRT::postProcess(
 
   if (should_publish_filtered_pointcloud) {
     const auto num_filtered_points = post_ptr_->createFilteredPointcloud(
-      source_points, densified_cloud_.current_format, filtered_output_format_, source_probs,
+      source_points, frame_format_, filtered_output_format_, source_probs,
       filtered_points_msg_ptr_->data.get(), config_.segmentation_class_names_.size(),
       num_source_output_points, voxel_mapping);
     CHECK_CUDA_ERROR(cudaStreamSynchronize(stream_));
@@ -1148,25 +1204,31 @@ bool PTv3TRT::postProcess(
   return true;
 }
 
-bool PTv3TRT::postProcessDetection3D(std::vector<Box3D> & detection_boxes)
+void PTv3TRT::copyDetection3DOutputsToHost()
 {
-  CHECK_CUDA_ERROR(detection3d_post_ptr_->process(
-    query_heatmap_score_d_.get(), query_labels_d_.get(), heatmap_d_.get(), center_d_.get(),
-    height_d_.get(), dim_d_.get(), rot_d_.get(), config_.has_twist_ ? vel_d_.get() : nullptr,
-    stream_));
+  const auto copy = [this](auto * host, const auto * device, const std::size_t count) {
+    CHECK_CUDA_ERROR(
+      cudaMemcpyAsync(host, device, count * sizeof(*host), cudaMemcpyDeviceToHost, stream_));
+  };
+  copy(
+    classification_h_.get(), classification_d_.get(),
+    config_.num_anchor_ * config_.detection_class_names_.size());
+  copy(
+    prediction_h_.get(), prediction_d_.get(),
+    config_.num_anchor_ * Detection3DPostprocess::anchor_dim);
+  copy(
+    quality_h_.get(), quality_d_.get(), config_.num_anchor_ * Detection3DPostprocess::quality_dim);
+  copy(state_query_index_h_.get(), state_query_index_d_.get(), config_.num_temp_instances_);
+}
 
-  const Box3D * device_boxes = detection3d_post_ptr_->deviceBoxes();
-  const std::size_t num_boxes = detection3d_post_ptr_->numBoxes();
-
-  detection_boxes.resize(num_boxes);
-  if (num_boxes == 0) {
-    return true;
-  }
-  CHECK_CUDA_ERROR(cudaMemcpyAsync(
-    detection_boxes.data(), device_boxes, num_boxes * sizeof(Box3D), cudaMemcpyDeviceToHost,
-    stream_));
-  CHECK_CUDA_ERROR(cudaStreamSynchronize(stream_));
-  return true;
+void PTv3TRT::postProcessDetection3D(
+  const bool continues_stream, std::vector<Box3D> & detection_boxes)
+{
+  auto queries = detection3d_post_ptr_->decodeQueries(
+    classification_h_.get(), prediction_h_.get(), quality_h_.get());
+  instance_tracker_ptr_->assign(continues_stream, queries);
+  instance_tracker_ptr_->commit(state_query_index_h_.get());
+  detection_boxes = detection3d_post_ptr_->select(std::move(queries));
 }
 
 }  //  namespace autoware::ptv3

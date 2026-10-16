@@ -26,11 +26,11 @@
 #include <cuda_blackboard/cuda_blackboard_subscriber.hpp>
 #include <cuda_blackboard/cuda_pointcloud2.hpp>
 #include <perception_utils/detection_class_remapper.hpp>
-#include <perception_utils/iou_bev_nms.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <tf2_eigen/tf2_eigen.hpp>
 
 #include <autoware_perception_msgs/msg/detected_objects.hpp>
+#include <autoware_perception_msgs/msg/tracked_objects.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <std_msgs/msg/header.hpp>
 
@@ -62,11 +62,14 @@ public:
 
 private:
   void cloudCallback(const std::shared_ptr<const cuda_blackboard::CudaPointCloud2> & msg_ptr);
-  /// World-to-lidar transform at the frame stamp, or nothing when TF cannot provide it.
-  std::optional<Eigen::Affine3f> lookupWorldToLidar(const std_msgs::msg::Header & header) const;
+  /// Lidar pose in the world frame at the frame stamp, or nothing when TF cannot provide it.
+  /// Without TF every frame stands alone and gets the identity.
+  std::optional<StampedEgoPose> resolveEgoPose(const std_msgs::msg::Header & header) const;
+  /// Publish the detected boxes, and again under their track ids those holding a track.
+  void publishObjects(const std_msgs::msg::Header & header, const std::vector<Box3D> & boxes);
 
-  // Densification is optional: without past frames no sweep is ever transformed, so the TF
-  // buffer and its listener thread are never created.
+  // The TF buffer and its listener thread exist only when the detection memory needs the ego
+  // motion.
   std::optional<tf2_ros::Buffer> tf_buffer_;
   std::optional<tf2_ros::TransformListener> tf_listener_;
 
@@ -84,17 +87,16 @@ private:
 
   rclcpp::Publisher<autoware_perception_msgs::msg::DetectedObjects>::SharedPtr
     detected_objects_pub_;
+  rclcpp::Publisher<autoware_perception_msgs::msg::TrackedObjects>::SharedPtr tracked_objects_pub_;
 
   std::unique_ptr<PTv3TRT> model_ptr_{nullptr};
 
   rclcpp::TimerBase::SharedPtr timer_{nullptr};
 
-  perception_utils::IouBevNms iou_bev_nms_;
   perception_utils::DetectionClassRemapper detection_class_remapper_;
   std::vector<std::string> detection_class_names_;
-  bool has_twist_{false};
-  std::string densification_world_frame_id_;
-  std::int64_t densification_num_past_frames_{0};
+  std::string world_frame_id_;
+  std::uint64_t session_id_{0};
 
   // debugger
   std::unique_ptr<autoware_utils::StopWatch<std::chrono::milliseconds>> stop_watch_ptr_{nullptr};

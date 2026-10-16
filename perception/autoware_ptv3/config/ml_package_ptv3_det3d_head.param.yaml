@@ -1,8 +1,14 @@
 /**:
   ros__parameters:
     detection3d:
-      bbox_voxel_size: [0.96, 0.96, 8.0]
-      has_twist: true
-      num_proposals: 500
-      post_center_range: [-132.88, -132.88, -5.0, 132.88, 132.88, 12.0]
       class_names: ["CAR", "TRUCK", "BUS", "MOTORCYCLE", "BICYCLE", "PEDESTRIAN", "ANIMAL", "BARRIER", "TRAFFIC_CONE", "DEBRIS"]
+      num_anchor: 1800
+      num_temp_instances: 1200
+      embed_dims: 256
+      default_time_interval: 0.1
+      max_time_interval: 2.0
+      track_birth_score: 0.2
+      circle_nms:
+        # Group of every class in class_names order, -1 for a class never suppressed
+        class_groups: [-1, -1, -1, 0, 0, 0, -1, -1, -1, -1]
+        radii: [0.5]

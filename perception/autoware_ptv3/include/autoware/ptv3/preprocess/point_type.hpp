@@ -25,13 +25,12 @@ namespace autoware::ptv3
 
 enum class CloudFormat { XYZIRCAEDT, XYZIRADRT, XYZIRC, XYZI, UNKNOWN };
 
-/// Non-owning view of voxelization metadata for selecting current-frame representatives.
+/// Non-owning view of voxelization metadata for selecting the input point of every voxel.
 /// Empty pointers select the original per-point output path.
 struct VoxelPointMapping
 {
   const std::uint32_t * sorted_point_indices{};
   const std::uint32_t * voxel_starts{};
-  std::size_t num_current_points{};
 };
 
 inline CloudFormat parse_cloud_format_string(std::string format)

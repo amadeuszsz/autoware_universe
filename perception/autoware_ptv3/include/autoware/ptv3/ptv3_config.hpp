@@ -43,8 +43,7 @@ class PTv3Config
 public:
   PTv3Config(
     const bool use_seg3d_head, const bool use_det3d_head, const std::string & plugins_path,
-    const std::int64_t cloud_capacity, const std::string & densification_world_frame_id,
-    const std::int64_t densification_num_past_frames, const std::vector<std::int64_t> & voxels_num,
+    const std::int64_t cloud_capacity, const std::vector<std::int64_t> & voxels_num,
     const std::vector<std::int64_t> & pooled_voxels_num_max,
     const std::vector<float> & point_cloud_range, const std::vector<float> & voxel_size,
     const std::int64_t max_points_per_voxel,
@@ -60,11 +59,13 @@ public:
     const std::string & source_reconstruction = {},
     const std::vector<std::int64_t> & dec_depths = {},
     const std::vector<std::string> & detection_class_names = {},
-    const std::vector<float> & bbox_voxel_size = {},
     const std::vector<float> & distance_bin_upper_limits = {},
-    const std::vector<float> & detection_score_thresholds = {},
-    const std::vector<float> & yaw_norm_thresholds = {}, const bool has_twist = {},
-    std::size_t num_proposals = {}, const std::vector<float> & post_center_range = {})
+    const std::vector<float> & detection_score_thresholds = {}, const std::int64_t num_anchor = {},
+    const std::int64_t num_temp_instances = {}, const std::int64_t embed_dims = {},
+    const float default_time_interval = {}, const float max_time_interval = {},
+    const float track_birth_score = {},
+    const std::vector<std::int64_t> & circle_nms_class_groups = {},
+    const std::vector<float> & circle_nms_radii = {})
   : use_seg3d_head_(use_seg3d_head), use_det3d_head_(use_det3d_head)
   {
     plugins_path_ = plugins_path;
@@ -75,16 +76,6 @@ public:
       throw std::runtime_error(
         "At least one of segmentation3d.use_head or detection3d.use_head must be true.");
     }
-
-    if (densification_world_frame_id.empty()) {
-      throw std::runtime_error("densification_world_frame_id must not be empty.");
-    }
-    if (densification_num_past_frames < 0) {
-      throw std::runtime_error("densification_num_past_frames must be non-negative.");
-    }
-    densification_world_frame_id_ = densification_world_frame_id;
-    densification_num_past_frames_ = densification_num_past_frames;
-    densified_cloud_capacity_ = cloud_capacity_ * (densification_num_past_frames_ + 1);
 
     if (voxels_num.size() == 3) {
       min_num_voxels_ = voxels_num[0];
@@ -112,13 +103,10 @@ public:
     }
     max_points_per_voxel_ = max_points_per_voxel;
 
-    // Cells the device grid mapping (see gridCoord) can emit per axis - one more than
-    // round(extent / size) when a range border is not voxel-aligned. The largest coordinate comes
-    // from the largest float below max_range: the crop is strict and float division is monotonic.
+    // Cells per axis of the training voxelizer grid: cells count from the lower range border and
+    // the range holds round(extent / size) of them, the crop drops the rows past the last one.
     const auto grid_cells = [](const float min_range, const float max_range, const float size) {
-      const float min_coord = std::floor(min_range / size);
-      const float max_coord = std::floor(std::nextafter(max_range, min_range) / size);
-      return static_cast<std::int64_t>(max_coord - min_coord) + 1;
+      return static_cast<std::int64_t>(std::lround((max_range - min_range) / size));
     };
     grid_x_size_ = grid_cells(min_x_range_, max_x_range_, voxel_x_size_);
     grid_y_size_ = grid_cells(min_y_range_, max_y_range_, voxel_y_size_);
@@ -173,12 +161,6 @@ public:
       if (detection_class_names.empty()) {
         throw std::runtime_error("detection_class_names must not be empty when use_det3d_head.");
       }
-      if (bbox_voxel_size.size() != 3) {
-        throw std::runtime_error("bbox_voxel_size must contain 3 elements.");
-      }
-      if (bbox_voxel_size[0] <= 0.0F || bbox_voxel_size[1] <= 0.0F || bbox_voxel_size[2] <= 0.0F) {
-        throw std::runtime_error("bbox_voxel_size values must be positive.");
-      }
       if (distance_bin_upper_limits.empty()) {
         throw std::runtime_error("distance_bin_upper_limits must not be empty.");
       }
@@ -199,79 +181,31 @@ public:
             [](float value) { return value >= 0.0F && value <= 1.0F; })) {
         throw std::runtime_error("detection_score_thresholds values must be between 0 and 1.");
       }
-      if (yaw_norm_thresholds.size() != detection_class_names.size()) {
-        throw std::runtime_error("yaw_norm_thresholds size must match detection class_names.");
+      if (num_anchor < 1 || embed_dims < 1) {
+        throw std::runtime_error("num_anchor and embed_dims must be positive.");
       }
-      if (!std::all_of(yaw_norm_thresholds.begin(), yaw_norm_thresholds.end(), [](float value) {
-            return value >= 0.0F && value <= 1.0F;
-          })) {
-        throw std::runtime_error("yaw_norm_thresholds values must be between 0 and 1.");
+      if (num_temp_instances < 1 || num_temp_instances >= num_anchor) {
+        throw std::runtime_error("num_temp_instances must be in [1, num_anchor).");
+      }
+      if (default_time_interval <= 0.0F || max_time_interval < default_time_interval) {
+        throw std::runtime_error("The time intervals must satisfy 0 < default <= max.");
+      }
+      if (track_birth_score < 0.0F || track_birth_score > 1.0F) {
+        throw std::runtime_error("track_birth_score must be between 0 and 1.");
       }
 
       detection_class_names_ = detection_class_names;
-      bbox_voxel_x_size_ = bbox_voxel_size[0];
-      bbox_voxel_y_size_ = bbox_voxel_size[1];
-
-      // The exporter taps encoder stages S-2 (BEV resolution) and S-1, so the detection grid
-      // resolution must equal the voxel size at stage S-2's cumulative pooling depth.
-      std::int64_t skip_stage_depth = 0;
-      for (std::size_t stage = 0; stage + 1 < pooling_strides_.size(); ++stage) {
-        for (auto value = pooling_strides_[stage]; value > 1; value >>= 1) {
-          ++skip_stage_depth;
-        }
-      }
-      const auto skip_stage_scale = static_cast<float>(std::int64_t{1} << skip_stage_depth);
-      constexpr float eps = 1e-3F;
-      if (std::abs(bbox_voxel_x_size_ - voxel_x_size_ * skip_stage_scale) > eps) {
-        throw std::runtime_error(
-          "x component of bbox_voxel_size must equal voxel_size * 2^" +
-          std::to_string(skip_stage_depth) + " (the detection branch taps that encoder stage).");
-      }
-      if (std::abs(bbox_voxel_y_size_ - voxel_y_size_ * skip_stage_scale) > eps) {
-        throw std::runtime_error(
-          "y component of bbox_voxel_size must equal voxel_size * 2^" +
-          std::to_string(skip_stage_depth) + " (the detection branch taps that encoder stage).");
-      }
-
       distance_bin_upper_limits_ = distance_bin_upper_limits;
       detection_score_thresholds_ = detection_score_thresholds;
-      yaw_norm_thresholds_ = yaw_norm_thresholds;
-      has_twist_ = has_twist;
-
-      const auto bbox_grid_x_size =
-        static_cast<std::size_t>((max_x_range_ - min_x_range_) / bbox_voxel_x_size_);
-      const auto bbox_grid_y_size =
-        static_cast<std::size_t>((max_y_range_ - min_y_range_) / bbox_voxel_y_size_);
-      if (bbox_grid_x_size == 0 || bbox_grid_y_size == 0) {
-        throw std::runtime_error("bbox_voxel_size produces an empty detection grid.");
-      }
-      if (
-        std::abs(
-          (static_cast<float>(bbox_grid_x_size) * bbox_voxel_x_size_) -
-          (max_x_range_ - min_x_range_)) > eps ||
-        std::abs(
-          (static_cast<float>(bbox_grid_y_size) * bbox_voxel_y_size_) -
-          (max_y_range_ - min_y_range_)) > eps) {
-        throw std::runtime_error("bbox_voxel_size must evenly cover the point cloud xy range.");
-      }
-      det_grid_x_size_ = bbox_grid_x_size;
-      det_grid_y_size_ = bbox_grid_y_size;
-
-      if (num_proposals == 0) {
-        throw std::runtime_error("num_proposals must be positive.");
-      }
-      if (post_center_range.size() != 6) {
-        throw std::runtime_error("post_center_range must contain 6 elements.");
-      }
-      if (
-        post_center_range[0] >= post_center_range[3] ||
-        post_center_range[1] >= post_center_range[4] ||
-        post_center_range[2] >= post_center_range[5]) {
-        throw std::runtime_error(
-          "post_center_range minimum values must be smaller than maximum values.");
-      }
-      num_proposals_ = num_proposals;
-      post_center_range_ = post_center_range;
+      num_anchor_ = static_cast<std::size_t>(num_anchor);
+      num_temp_instances_ = static_cast<std::size_t>(num_temp_instances);
+      embed_dims_ = static_cast<std::size_t>(embed_dims);
+      default_time_interval_ = default_time_interval;
+      max_time_interval_ = max_time_interval;
+      track_birth_score_ = track_birth_score;
+      circle_nms_class_groups_ = validate_circle_nms_groups(
+        circle_nms_class_groups, circle_nms_radii, detection_class_names_.size());
+      circle_nms_radii_ = circle_nms_radii;
     }
   }
 
@@ -360,6 +294,31 @@ public:
       colors.push_back(rgb_float);
     }
     return colors;
+  }
+
+  // Every class names its circle NMS group, -1 for none, and every group has a positive radius.
+  static std::vector<std::int64_t> validate_circle_nms_groups(
+    const std::vector<std::int64_t> & class_groups, const std::vector<float> & radii,
+    const std::size_t num_classes)
+  {
+    if (class_groups.size() != num_classes) {
+      throw std::runtime_error("circle_nms class_groups must have one entry per detection class.");
+    }
+    const auto num_groups = static_cast<std::int64_t>(radii.size());
+    for (const auto group : class_groups) {
+      if (group < -1 || group >= num_groups) {
+        throw std::runtime_error("circle_nms class_groups entries must be -1 or a radii index.");
+      }
+    }
+    for (std::int64_t group = 0; group < num_groups; ++group) {
+      if (radii[group] <= 0.0F) {
+        throw std::runtime_error("circle_nms radii must be positive.");
+      }
+      if (std::find(class_groups.begin(), class_groups.end(), group) == class_groups.end()) {
+        throw std::runtime_error("Every circle_nms group must hold at least one class.");
+      }
+    }
+    return class_groups;
   }
 
   static std::vector<std::string> validate_serialization_orders(
@@ -531,31 +490,23 @@ public:
 
   // Detection head
   std::vector<std::string> detection_class_names_;
-  float bbox_voxel_x_size_{};
-  float bbox_voxel_y_size_{};
-  bool has_twist_{};
-  std::size_t num_proposals_{};
-  std::vector<float> post_center_range_;
   std::vector<float> distance_bin_upper_limits_;
-  std::vector<float> detection_score_thresholds_;
-  std::vector<float> yaw_norm_thresholds_;
-  std::size_t det_grid_x_size_{};
-  std::size_t det_grid_y_size_{};
+  std::vector<float> detection_score_thresholds_;      // [distance bin][class]
+  std::size_t num_anchor_{};                           // instances decoded per frame
+  std::size_t num_temp_instances_{};                   // instances carried to the next frame
+  std::size_t embed_dims_{};                           // instance feature width
+  float default_time_interval_{};                      // frame gap fed when a stream starts
+  float max_time_interval_{};                          // largest frame gap that keeps the memory
+  float track_birth_score_{};                          // score from which a query starts a track
+  std::vector<std::int64_t> circle_nms_class_groups_;  // per class, -1 when not suppressed
+  std::vector<float> circle_nms_radii_;                // per group, in meters
 
   // Common network parameters
-  std::int64_t cloud_capacity_{};            // capacity of one lidar frame
-  std::int64_t densified_cloud_capacity_{};  // capacity of the multi-frame network input
+  std::int64_t cloud_capacity_{};  // capacity of one lidar frame
   std::int64_t min_num_voxels_{};
   std::int64_t max_num_voxels_{};
   std::int64_t max_points_per_voxel_{};  // padded voxel slots, matches the training voxelizer
-  const std::int64_t num_point_feature_size_{5};  // x, y, z, intensity, time_lag
-
-  // Densification parameters
-  std::string densification_world_frame_id_;
-  std::int64_t densification_num_past_frames_{};
-  // Sweep points inside the |x|,|y| box of this half width around the sweep's own origin
-  // are ego ghosts; the box and the value mirror the training loader's remove_close.
-  const float sweep_close_radius_{1.0F};
+  const std::int64_t num_point_feature_size_{4};  // x, y, z, intensity
 
   // Pointcloud range in meters
   float min_x_range_{};

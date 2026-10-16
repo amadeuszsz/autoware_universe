@@ -352,7 +352,6 @@ PTv3Config make_detection_test_config()
   params.pooling_strides = {2, 2, 2, 2};
   params.enc_channels = {8, 16, 32, 64, 128};
   params.patch_sizes = {4, 4, 4, 4, 4};
-  params.bbox_voxel_size = {8.0F, 8.0F, 4.0F};
   return makeConfig(params);
 }
 
@@ -559,7 +558,9 @@ protected:
   }
 };
 
-TEST_F(SerializedPoolingMetadataTest, DetectionGridCoord3StaysInsideBevGrid)
+// The detection head samples the stage 3 voxels on a dense grid of that stage, 8 input cells per
+// cell, so their coordinates must stay inside it.
+TEST_F(SerializedPoolingMetadataTest, DetectionGridCoord3StaysInsideTheSampledGrid)
 {
   const auto config = make_detection_test_config();
   const auto grid_coord =
@@ -575,11 +576,16 @@ TEST_F(SerializedPoolingMetadataTest, DetectionGridCoord3StaysInsideBevGrid)
     static_cast<std::size_t>(stage_counts[point_grid_coord_3_stage + 1]);
   const auto point_grid_coord_3 = copyToHost(
     buffers.stages[point_grid_coord_3_stage].grid_coord.get(), point_grid_coord_3_count * 3);
+  const auto sampled_cells = [](const std::int64_t cells) {
+    return static_cast<std::int32_t>((cells + 7) / 8);
+  };
   for (std::size_t i = 0; i < point_grid_coord_3_count; ++i) {
     EXPECT_GE(point_grid_coord_3[i * 3 + 0], 0);
     EXPECT_GE(point_grid_coord_3[i * 3 + 1], 0);
-    EXPECT_LT(point_grid_coord_3[i * 3 + 0], static_cast<std::int32_t>(config.det_grid_x_size_));
-    EXPECT_LT(point_grid_coord_3[i * 3 + 1], static_cast<std::int32_t>(config.det_grid_y_size_));
+    EXPECT_GE(point_grid_coord_3[i * 3 + 2], 0);
+    EXPECT_LT(point_grid_coord_3[i * 3 + 0], sampled_cells(config.grid_x_size_));
+    EXPECT_LT(point_grid_coord_3[i * 3 + 1], sampled_cells(config.grid_y_size_));
+    EXPECT_LT(point_grid_coord_3[i * 3 + 2], sampled_cells(config.grid_z_size_));
   }
 }
 

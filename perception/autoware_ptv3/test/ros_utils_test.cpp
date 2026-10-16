@@ -18,10 +18,13 @@
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace autoware::ptv3
@@ -44,7 +47,7 @@ TEST(RosUtilsTest, ConvertsBox3DToDetectedObject)
   const Box3D box{1, 0.75F, 1.0F, 2.0F, 3.0F, 4.0F, 5.0F, 6.0F, 0.5F * pi, 1.0F, 2.0F};
   autoware_perception_msgs::msg::DetectedObject object;
 
-  box3d_to_detected_object(box, {"CAR", "PEDESTRIAN"}, true, object);
+  box3d_to_detected_object(box, {"CAR", "PEDESTRIAN"}, object);
 
   ASSERT_EQ(object.classification.size(), 1U);
   EXPECT_EQ(object.classification.front().label, ObjectClassification::PEDESTRIAN);
@@ -56,16 +59,55 @@ TEST(RosUtilsTest, ConvertsBox3DToDetectedObject)
   EXPECT_NEAR(object.kinematics.twist_with_covariance.twist.linear.y, -1.0F, 1e-5F);
 }
 
-TEST(RosUtilsTest, ConvertsUnknownBoxLabelWithoutTwist)
+TEST(RosUtilsTest, ConvertsUnknownBoxLabel)
 {
   const Box3D box{99, 0.5F, 0.0F, 0.0F, 0.0F, 1.0F, 1.0F, 1.0F, 0.0F, 1.0F, 1.0F};
   autoware_perception_msgs::msg::DetectedObject object;
 
-  box3d_to_detected_object(box, {"CAR"}, false, object);
+  box3d_to_detected_object(box, {"CAR"}, object);
 
   ASSERT_EQ(object.classification.size(), 1U);
   EXPECT_EQ(object.classification.front().label, ObjectClassification::UNKNOWN);
-  EXPECT_FALSE(object.kinematics.has_twist);
+}
+
+TEST(RosUtilsTest, TrackIdentifiersKeepTheSessionAndTheTrackApart)
+{
+  const auto uuid = track_uuid(0x0807060504030201ULL, 0x1817161514131211LL);
+  for (std::size_t byte = 0; byte < 8; ++byte) {
+    EXPECT_EQ(uuid.uuid[byte], 0x11 + byte);
+    EXPECT_EQ(uuid.uuid[8 + byte], byte + 1);
+  }
+  EXPECT_NE(track_uuid(1, 7).uuid, track_uuid(2, 7).uuid);
+  EXPECT_NE(track_uuid(1, 7).uuid, track_uuid(1, 8).uuid);
+}
+
+TEST(RosUtilsTest, TrackIdentifiersOfASessionDifferInTheirFirstBytes)
+{
+  const std::uint64_t session_id = 0x7b73a1b2c3d4e5f6ULL;
+  const auto first = track_uuid(session_id, 1);
+  const auto second = track_uuid(session_id, 2);
+  const auto far = track_uuid(session_id, 257);
+  EXPECT_NE(first.uuid[0], second.uuid[0]);
+  EXPECT_NE(std::make_pair(first.uuid[0], first.uuid[1]), std::make_pair(far.uuid[0], far.uuid[1]));
+}
+
+TEST(RosUtilsTest, ConvertsADetectedObjectIntoATrackedObject)
+{
+  const Box3D box{0, 0.75F, 1.0F, 2.0F, 3.0F, 4.0F, 2.0F, 1.5F, 0.0F, 3.0F, 0.0F};
+  autoware_perception_msgs::msg::DetectedObject detected_object;
+  box3d_to_detected_object(box, {"CAR"}, detected_object);
+
+  const auto object_id = track_uuid(1, 7);
+  const auto tracked_object = detected_object_to_tracked_object(detected_object, object_id);
+
+  EXPECT_EQ(tracked_object.object_id, object_id);
+  EXPECT_FLOAT_EQ(tracked_object.existence_probability, 0.75F);
+  EXPECT_EQ(tracked_object.classification, detected_object.classification);
+  EXPECT_EQ(
+    tracked_object.kinematics.pose_with_covariance,
+    detected_object.kinematics.pose_with_covariance);
+  EXPECT_NEAR(tracked_object.kinematics.twist_with_covariance.twist.linear.x, 3.0, 1e-6);
+  EXPECT_EQ(tracked_object.shape, detected_object.shape);
 }
 
 class ClassificationMappingTest : public ::testing::Test

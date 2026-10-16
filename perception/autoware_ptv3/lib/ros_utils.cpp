@@ -19,6 +19,7 @@
 #include <autoware_utils/geometry/geometry.hpp>
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -31,7 +32,7 @@ namespace autoware::ptv3
 using Label = autoware_perception_msgs::msg::ObjectClassification;
 
 void box3d_to_detected_object(
-  const Box3D & box3d, const std::vector<std::string> & class_names, const bool has_twist,
+  const Box3D & box3d, const std::vector<std::string> & class_names,
   autoware_perception_msgs::msg::DetectedObject & obj)
 {
   obj.existence_probability = box3d.score;
@@ -60,13 +61,42 @@ void box3d_to_detected_object(
   obj.shape.dimensions =
     autoware_utils::create_translation(box3d.length, box3d.width, box3d.height);
 
-  if (has_twist) {
-    geometry_msgs::msg::Twist twist;
-    twist.linear.x = std::cos(yaw) * box3d.vel_x + std::sin(yaw) * box3d.vel_y;
-    twist.linear.y = -std::sin(yaw) * box3d.vel_x + std::cos(yaw) * box3d.vel_y;
-    obj.kinematics.twist_with_covariance.twist = twist;
-    obj.kinematics.has_twist = true;
+  geometry_msgs::msg::Twist twist;
+  twist.linear.x = std::cos(yaw) * box3d.vel_x + std::sin(yaw) * box3d.vel_y;
+  twist.linear.y = -std::sin(yaw) * box3d.vel_x + std::cos(yaw) * box3d.vel_y;
+  obj.kinematics.twist_with_covariance.twist = twist;
+  obj.kinematics.has_twist = true;
+}
+
+unique_identifier_msgs::msg::UUID track_uuid(
+  const std::uint64_t session_id, const std::int64_t track_id)
+{
+  unique_identifier_msgs::msg::UUID uuid;
+  const auto track = static_cast<std::uint64_t>(track_id);
+  for (std::size_t byte = 0; byte < 8; ++byte) {
+    const auto shift = 8 * byte;
+    uuid.uuid[byte] = static_cast<std::uint8_t>(track >> shift);
+    uuid.uuid[8 + byte] = static_cast<std::uint8_t>(session_id >> shift);
   }
+  return uuid;
+}
+
+autoware_perception_msgs::msg::TrackedObject detected_object_to_tracked_object(
+  const autoware_perception_msgs::msg::DetectedObject & detected_object,
+  const unique_identifier_msgs::msg::UUID & object_id)
+{
+  autoware_perception_msgs::msg::TrackedObject tracked_object;
+  tracked_object.object_id = object_id;
+  tracked_object.existence_probability = detected_object.existence_probability;
+  tracked_object.classification = detected_object.classification;
+  tracked_object.kinematics.pose_with_covariance = detected_object.kinematics.pose_with_covariance;
+  tracked_object.kinematics.twist_with_covariance =
+    detected_object.kinematics.twist_with_covariance;
+  tracked_object.kinematics.orientation_availability =
+    detected_object.kinematics.orientation_availability;
+  tracked_object.kinematics.is_stationary = false;
+  tracked_object.shape = detected_object.shape;
+  return tracked_object;
 }
 
 std::uint8_t get_classification_type(const std::string & class_name)
