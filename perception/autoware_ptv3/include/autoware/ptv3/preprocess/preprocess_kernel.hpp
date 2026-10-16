@@ -51,7 +51,7 @@ public:
   /**
    * @brief Crops and voxelizes the densified cloud into padded voxels.
    *
-   * `points` holds `(x, y, z, intensity, time_lag)` rows with the current frame as the leading
+   * `points` holds `(x, y, z, intensity[, time_lag])` rows with the current frame as the leading
    * `num_current_points` block. The crop drops out-of-range points and sweep ego ghosts;
    * compaction preserves order, so the current frame stays the leading block of the cropped buffer
    * (`num_cropped_current_points` rows). The emitted voxels are sorted by their order-0
@@ -59,10 +59,11 @@ public:
    * zero padded, which mirrors the training-time hard voxelization. The ordering is also required
    * by generateSerializedPoolingMetadata.
    *
-   * @param points Densified input rows, laid out [num_points, 5].
+   * @param points Densified input rows, laid out [num_points, num_point_feature_size].
    * @param num_points Number of densified rows.
    * @param num_current_points Size of the leading current-frame block.
-   * @param voxels Output padded voxel points, laid out [num_voxels, max_points_per_voxel, 5].
+   * @param voxels Output padded voxel points, laid out
+   * [num_voxels, max_points_per_voxel, num_point_feature_size].
    * @param num_points_per_voxel Output valid point count per voxel.
    * @param voxel_coords Output grid coordinates, laid out [num_voxels, 3].
    * @param serialized_code Output serialized codes, laid out [num_orders, num_voxels].

@@ -147,16 +147,43 @@ PreprocessCuda::~PreprocessCuda()
 }
 
 /**
+ * @brief Maps a point to its grid coordinate. Single helper so the voxelization key and the
+ * serialization codes always place a point in the same cell.
+ *
+ * @param x Point position on the x axis.
+ * @param y Point position on the y axis.
+ * @param z Point position on the z axis.
+ * @param voxel_size_x Voxel edge length on the x axis.
+ * @param voxel_size_y Voxel edge length on the y axis.
+ * @param voxel_size_z Voxel edge length on the z axis.
+ * @param min_x Grid origin on the x axis, the lower range border.
+ * @param min_y Grid origin on the y axis, the lower range border.
+ * @param min_z Grid origin on the z axis, the lower range border.
+ * @return The grid coordinate, the cell counted from the lower range border as the training
+ * voxelizer counts it.
+ */
+__device__ inline int3 gridCoord(
+  const float x, const float y, const float z, const float voxel_size_x, const float voxel_size_y,
+  const float voxel_size_z, const float min_x, const float min_y, const float min_z)
+{
+  return make_int3(
+    static_cast<std::int32_t>(std::floor((x - min_x) / voxel_size_x)),
+    static_cast<std::int32_t>(std::floor((y - min_y) / voxel_size_y)),
+    static_cast<std::int32_t>(std::floor((z - min_z) / voxel_size_z)));
+}
+
+/**
  * @brief Marks the densified rows the network consumes.
  *
- * Out-of-range rows are dropped. The sweep kernel has already poisoned the ego ghosts of every
- * past sweep with NaN coordinates, so they fail the range test here like the training loader's
- * remove_close. Current-frame rows near the origin stay.
+ * Out-of-range rows are dropped: a row must lie in the half-open range and in a cell of the
+ * grid, as the training range filter and voxelizer keep it. The sweep kernel has already
+ * poisoned the ego ghosts of every past sweep with NaN coordinates, so they fail the range test
+ * here like the training loader's remove_close. Current-frame rows near the origin stay.
  */
 __global__ void cropKernel(
   const float * __restrict__ points, std::uint32_t * __restrict__ mask, std::size_t num_points,
   std::int64_t num_features, float min_x, float min_y, float min_z, float max_x, float max_y,
-  float max_z)
+  float max_z, float voxel_size_x, float voxel_size_y, float voxel_size_z, int3 grid_size)
 {
   const auto idx = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
   if (idx >= num_points) {
@@ -170,7 +197,11 @@ __global__ void cropKernel(
   // comparison and drop out here together with the out-of-range points.
   const bool in_range =
     x >= min_x && x < max_x && y >= min_y && y < max_y && z >= min_z && z < max_z;
-  mask[idx] = in_range;
+  // The float rounding of a row near the upper border can still reach one cell past the grid
+  const int3 cell =
+    gridCoord(x, y, z, voxel_size_x, voxel_size_y, voxel_size_z, min_x, min_y, min_z);
+  const bool in_grid = cell.x < grid_size.x && cell.y < grid_size.y && cell.z < grid_size.z;
+  mask[idx] = in_range && in_grid;
 }
 
 /// Compacts the flagged elements of a typed array, preserving their order.
@@ -313,32 +344,6 @@ __device__ inline std::int64_t serializeCoord(
 }
 
 /**
- * @brief Maps a point to its grid coordinate. Single helper so the voxelization key and the
- * serialization codes always place a point in the same cell.
- *
- * @param x Point position on the x axis.
- * @param y Point position on the y axis.
- * @param z Point position on the z axis.
- * @param voxel_size_x Voxel edge length on the x axis.
- * @param voxel_size_y Voxel edge length on the y axis.
- * @param voxel_size_z Voxel edge length on the z axis.
- * @param min_x Grid origin on the x axis, in cells.
- * @param min_y Grid origin on the y axis, in cells.
- * @param min_z Grid origin on the z axis, in cells.
- * @return The grid coordinate.
- */
-__device__ inline int3 gridCoord(
-  const float x, const float y, const float z, const float voxel_size_x, const float voxel_size_y,
-  const float voxel_size_z, const std::int32_t min_x, const std::int32_t min_y,
-  const std::int32_t min_z)
-{
-  return make_int3(
-    static_cast<std::int32_t>(std::floor(x / voxel_size_x) - min_x),
-    static_cast<std::int32_t>(std::floor(y / voxel_size_y) - min_y),
-    static_cast<std::int32_t>(std::floor(z / voxel_size_z) - min_z));
-}
-
-/**
  * @brief Produces the voxelization key: the order-0 serialized code.
  *
  * The code is unique per grid cell, so sorting by it deduplicates voxels and leaves them in
@@ -347,7 +352,7 @@ __device__ inline int3 gridCoord(
 __global__ void voxelizationCodeKernel(
   const float * __restrict__ points, std::int64_t * __restrict__ codes, std::size_t num_points,
   std::int64_t num_features, float voxel_size_x, float voxel_size_y, float voxel_size_z,
-  std::int32_t min_x, std::int32_t min_y, std::int32_t min_z, int depth)
+  float min_x, float min_y, float min_z, int depth)
 {
   const auto idx = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
   if (idx >= num_points) {
@@ -367,7 +372,7 @@ __global__ void voxelizationCodeKernel(
 __global__ void computeGridCoordsAndSerializationKernel(
   const float * __restrict__ voxels, std::int64_t row_stride, int3 * __restrict__ coords,
   std::int64_t * __restrict__ codes, std::size_t num_voxels, float voxel_size_x, float voxel_size_y,
-  float voxel_size_z, std::int32_t min_x, std::int32_t min_y, std::int32_t min_z, int depth)
+  float voxel_size_z, float min_x, float min_y, float min_z, int depth)
 {
   static_assert(sizeof(int3) == sizeof(std::int32_t) * 3, "int3 must be 12 bytes");
   const auto idx = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
@@ -873,7 +878,11 @@ std::size_t PreprocessCuda::generateVoxels(
   cropKernel<<<num_blocks, config_.threads_per_block_, 0, stream_>>>(
     points, crop_mask_d_.get(), num_points, num_features, config_.min_x_range_,
     config_.min_y_range_, config_.min_z_range_, config_.max_x_range_, config_.max_y_range_,
-    config_.max_z_range_);
+    config_.max_z_range_, config_.voxel_x_size_, config_.voxel_y_size_, config_.voxel_z_size_,
+    make_int3(
+      static_cast<std::int32_t>(config_.grid_x_size_),
+      static_cast<std::int32_t>(config_.grid_y_size_),
+      static_cast<std::int32_t>(config_.grid_z_size_)));
   CHECK_CUDA_ERROR(cudaPeekAtLastError());
   CHECK_CUDA_ERROR(
     cub::DeviceScan::InclusiveSum(
@@ -904,18 +913,11 @@ std::size_t PreprocessCuda::generateVoxels(
   *output_num_cropped_current_points = *num_cropped_current_points_;
   const auto num_cropped_points = static_cast<std::size_t>(*num_cropped_points_);
 
-  const auto coord_min_x =
-    static_cast<std::int32_t>(std::floor(config_.min_x_range_ / config_.voxel_x_size_));
-  const auto coord_min_y =
-    static_cast<std::int32_t>(std::floor(config_.min_y_range_ / config_.voxel_y_size_));
-  const auto coord_min_z =
-    static_cast<std::int32_t>(std::floor(config_.min_z_range_ / config_.voxel_z_size_));
-
   const auto num_cropped_blocks = divup(num_cropped_points, config_.threads_per_block_);
   voxelizationCodeKernel<<<num_cropped_blocks, config_.threads_per_block_, 0, stream_>>>(
     cropped_points_d_.get(), codes_d_.get(), num_cropped_points, num_features,
-    config_.voxel_x_size_, config_.voxel_y_size_, config_.voxel_z_size_, coord_min_x, coord_min_y,
-    coord_min_z, config_.serialization_depth_);
+    config_.voxel_x_size_, config_.voxel_y_size_, config_.voxel_z_size_, config_.min_x_range_,
+    config_.min_y_range_, config_.min_z_range_, config_.serialization_depth_);
   CHECK_CUDA_ERROR(cudaPeekAtLastError());
 
   // This stable sort groups the points of every voxel in cropped order for the compaction below
@@ -971,7 +973,8 @@ std::size_t PreprocessCuda::generateVoxels(
     num_voxel_blocks, config_.threads_per_block_, 0, stream_>>>(
     voxels, max_points_per_voxel * num_features, reinterpret_cast<int3 *>(voxel_coords),
     serialized_code, num_voxels, config_.voxel_x_size_, config_.voxel_y_size_,
-    config_.voxel_z_size_, coord_min_x, coord_min_y, coord_min_z, config_.serialization_depth_);
+    config_.voxel_z_size_, config_.min_x_range_, config_.min_y_range_, config_.min_z_range_,
+    config_.serialization_depth_);
   CHECK_CUDA_ERROR(cudaPeekAtLastError());
 
   if (inverse_map != nullptr) {

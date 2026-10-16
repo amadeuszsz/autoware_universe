@@ -146,13 +146,14 @@ protected:
   {
     initializePreprocess(params);
     const auto & config = *config_;
-    const auto num_points = host_points.size() / kNumFeatures;
+    const auto num_features = static_cast<std::size_t>(config.num_point_feature_size_);
+    const auto num_points = host_points.size() / num_features;
     auto input_points_d = makeDeviceBuffer<float>(host_points.size());
     copyToDevice(input_points_d.get(), host_points);
 
     GenerateVoxelsResult result;
     result.voxels_d =
-      makeDeviceBuffer<float>(config.max_num_voxels_ * config.max_points_per_voxel_ * kNumFeatures);
+      makeDeviceBuffer<float>(config.max_num_voxels_ * config.max_points_per_voxel_ * num_features);
     result.num_points_per_voxel_d = makeDeviceBuffer<std::int32_t>(config.max_num_voxels_);
     result.voxel_coords_d = makeDeviceBuffer<std::int32_t>(config.max_num_voxels_ * 3);
     result.serialized_code_d = makeDeviceBuffer<std::int64_t>(config.max_num_voxels_ * 2);
@@ -488,7 +489,9 @@ TEST_F(PreprocessKernelTest, VoxelsAreOrderedByOrder0SerializedCode)
   }
 }
 
-TEST_F(PreprocessKernelTest, UnalignedRangeBoundaryKeepsCornerVoxelsDistinct)
+// Cells count from the lower range border as in the training voxelizer: with the border at 0.5,
+// the points at 0.6 and 1.4 share the first cell and 16.4 falls into the last of 16.
+TEST_F(PreprocessKernelTest, UnalignedRangeCountsCellsFromTheLowerBorder)
 {
   PTv3ConfigParams params;
   params.cloud_capacity = 64;
@@ -497,20 +500,21 @@ TEST_F(PreprocessKernelTest, UnalignedRangeBoundaryKeepsCornerVoxelsDistinct)
   params.voxel_size = {1.0F, 1.0F, 1.0F};
   const std::vector<float> host_points{
     0.6F,  0.6F,  0.6F,  1.0F, 0.0F,  // grid coord (0, 0, 0)
-    16.4F, 16.4F, 16.4F, 2.0F, 0.0F,  // grid coord (16, 16, 16): needs a fifth coordinate bit
+    1.4F,  1.4F,  1.4F,  1.0F, 0.0F,  // grid coord (0, 0, 0)
+    16.4F, 16.4F, 16.4F, 2.0F, 0.0F,  // grid coord (15, 15, 15)
   };
 
-  const auto result = runGenerateVoxels(params, host_points, 2);
-  ASSERT_EQ(result.num_cropped_points, 2U);
+  const auto result = runGenerateVoxels(params, host_points, 3);
+  ASSERT_EQ(result.num_cropped_points, 3U);
   ASSERT_EQ(result.num_voxels, 2U);
 
   const auto depth = config_->serialization_depth_;
-  EXPECT_EQ(depth, 5);
+  EXPECT_EQ(depth, 4);
   const auto voxel_coords = copyToHost(result.voxel_coords_d.get(), result.num_voxels * 3);
   const auto serialized_code = copyToHost(result.serialized_code_d.get(), result.num_voxels * 2);
-  EXPECT_EQ(voxel_coords, (std::vector<std::int32_t>{0, 0, 0, 16, 16, 16}));
+  EXPECT_EQ(voxel_coords, (std::vector<std::int32_t>{0, 0, 0, 15, 15, 15}));
   EXPECT_EQ(serialized_code[0], serialize_coord(0, 0, 0, depth, false));
-  EXPECT_EQ(serialized_code[1], serialize_coord(16, 16, 16, depth, false));
+  EXPECT_EQ(serialized_code[1], serialize_coord(15, 15, 15, depth, false));
 }
 
 // Decimal-aligned borders (neither 102.4 nor 0.1 is a binary float) rely on the config using the
@@ -541,6 +545,43 @@ TEST_F(PreprocessKernelTest, Base10AlignedBordersStayWithinSerializationDepth)
   EXPECT_EQ(voxel_coords, (std::vector<std::int32_t>{0, 0, 0, 2047, 2047, 2047}));
   EXPECT_EQ(serialized_code[0], serialize_coord(0, 0, 0, depth, false));
   EXPECT_EQ(serialized_code[1], serialize_coord(2047, 2047, 2047, depth, false));
+}
+
+// The single frame layout voxelizes rows of four features: the padded slots hold (x, y, z,
+// intensity) rows and the cells are those of the multi-frame layout.
+TEST_F(PreprocessKernelTest, SingleFrameLayoutVoxelizesFourFeatureRows)
+{
+  PTv3ConfigParams params;
+  params.point_features = {"x", "y", "z", "intensity"};
+  params.densification_num_past_frames = 0;
+  const std::vector<float> host_points{
+    0.10F, 0.20F, 0.30F, 1.5F,  //
+    0.80F, 0.20F, 0.30F, 2.5F,  // Same voxel as the previous point.
+    1.10F, 1.20F, 1.30F, 3.5F,  //
+    4.00F, 0.00F, 0.00F, 4.5F,  // Out of range.
+  };
+  constexpr std::size_t num_features = 4;
+
+  const auto result = runGenerateVoxels(params, host_points, 4);
+  ASSERT_EQ(result.num_cropped_points, 3U);
+  ASSERT_EQ(result.num_voxels, 2U);
+
+  const auto inverse_map = copyToHost(result.inverse_map_d.get(), result.num_cropped_points);
+  const auto shared_voxel = static_cast<std::size_t>(inverse_map[0]);
+  const auto single_voxel = static_cast<std::size_t>(inverse_map[2]);
+  const auto voxels = copyToHost(result.voxels_d.get(), result.num_voxels * 2 * num_features);
+  const auto slot = [&voxels](const std::size_t voxel, const std::size_t index) {
+    const auto begin = voxels.begin() + static_cast<std::ptrdiff_t>((voxel * 2 + index) * 4);
+    return std::vector<float>(begin, begin + 4);
+  };
+  expectFloatVectorEq(slot(shared_voxel, 0), {0.10F, 0.20F, 0.30F, 1.5F});
+  expectFloatVectorEq(slot(shared_voxel, 1), {0.80F, 0.20F, 0.30F, 2.5F});
+  expectFloatVectorEq(slot(single_voxel, 0), {1.10F, 1.20F, 1.30F, 3.5F});
+  expectFloatVectorEq(slot(single_voxel, 1), {0.0F, 0.0F, 0.0F, 0.0F});
+
+  const auto voxel_coords = copyToHost(result.voxel_coords_d.get(), result.num_voxels * 3);
+  EXPECT_EQ(voxel_coords[shared_voxel * 3], 1);
+  EXPECT_EQ(voxel_coords[single_voxel * 3], 2);
 }
 
 TEST_F(PreprocessKernelTest, RejectsEmptyOrOversizedCurrentFrame)

@@ -10,15 +10,17 @@ This package implements a TensorRT powered inference node for Point Transformers
 The sparse convolution backend corresponds to [spconv](https://github.com/traveller59/spconv).
 Autoware installs it automatically in its setup script. If needed, the user can also build it and install it following the [following instructions](https://github.com/autowarefoundation/spconv_cpp).
 
-The network input is a densified point cloud: the current lidar frame is concatenated with
-ego-motion-compensated past frames (`densification_num_past_frames`), and every point carries
-five features `(x, y, z, intensity, time_lag)`, where `time_lag` is the point age in seconds
-relative to the current frame. The densified cloud is voxelized on the GPU into padded voxels
-(`max_points_per_voxel` slots holding the first points of each voxel in input order) together with
-the valid point count per voxel, and the encoder graph averages the points of every voxel itself,
-so training and inference share one voxel feature definition. Past sweeps provide geometric and
-temporal context to the network, while every segmentation output cloud describes only the
-current frame's points.
+The network input is the current lidar frame, optionally densified with ego-motion-compensated
+past frames (`densification_num_past_frames`). Every point carries the features the encoder
+reads (`encoder.point_features`): `(x, y, z, intensity)` for a single frame, or
+`(x, y, z, intensity, time_lag)` when past frames are added, where `time_lag` is the point age in
+seconds relative to the current frame. A single frame encoder takes no past frames. The cloud is
+voxelized on the GPU into padded voxels (`max_points_per_voxel` slots holding the first points of
+each voxel in input order) together with the valid point count per voxel, and the encoder graph
+averages the points of every voxel itself, so training and inference share one voxel feature
+definition. Voxel cells are counted from the lower border of `point_cloud_range` as in the training
+voxelizer. Past sweeps provide geometric and temporal context to the network, while every
+segmentation output cloud describes only the current frame's points.
 
 ## Inputs / Outputs
 

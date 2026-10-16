@@ -32,6 +32,17 @@
           "default": 32,
           "minimum": 1
         },
+        "point_features": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["x", "y", "z", "intensity", "time_lag"]
+          },
+          "description": "Point channels the encoder reads in order: a single frame ['x', 'y', 'z', 'intensity'], or frames told apart by their time lag ['x', 'y', 'z', 'intensity', 'time_lag']. Densification needs the time lag.",
+          "default": ["x", "y", "z", "intensity"],
+          "minItems": 4,
+          "maxItems": 5
+        },
         "serialization_orders": {
           "type": "array",
           "items": [
@@ -83,6 +94,7 @@
         "point_cloud_range",
         "voxel_size",
         "max_points_per_voxel",
+        "point_features",
         "serialization_orders",
         "pooling_strides",
         "enc_channels",

@@ -30,6 +30,8 @@ namespace autoware::ptv3
 namespace test
 {
 
+const std::vector<std::string> time_lag_point_features{"x", "y", "z", "intensity", "time_lag"};
+
 PTv3Config makeDetectionConfig(
   const std::vector<float> & point_cloud_range = {0.0F, 0.0F, 0.0F, 16.0F, 16.0F, 4.0F},
   const std::vector<float> & bbox_voxel_size = {8.0F, 8.0F, 4.0F},
@@ -42,9 +44,9 @@ PTv3Config makeDetectionConfig(
 {
   return PTv3Config(
     false, true, "", 8, "map", 1, voxels_num, pooled_voxels_num_max, point_cloud_range, voxel_size,
-    2, {}, {}, {"z", "z-trans"}, {2, 2, 2, 2}, {8, 16, 32, 64, 128}, {4, 4, 4, 4, 4}, {}, {}, "",
-    false, "", {}, {"CAR", "PEDESTRIAN"}, bbox_voxel_size, distance_bin_upper_limits,
-    detection_score_thresholds, yaw_norm_thresholds, true, 8,
+    2, time_lag_point_features, {}, {}, {"z", "z-trans"}, {2, 2, 2, 2}, {8, 16, 32, 64, 128},
+    {4, 4, 4, 4, 4}, {}, {}, "", false, "", {}, {"CAR", "PEDESTRIAN"}, bbox_voxel_size,
+    distance_bin_upper_limits, detection_score_thresholds, yaw_norm_thresholds, true, 8,
     {-2.0F, -2.0F, -2.0F, 4.0F, 4.0F, 4.0F});
 }
 
@@ -54,8 +56,34 @@ PTv3Config makeWindowedSegmentationConfig(const std::vector<std::int64_t> & patc
 {
   return PTv3Config(
     true, false, "", 8, "map", 1, {1, 4, 8}, {8, 8}, {-1.0F, -1.0F, -1.0F, 3.0F, 3.0F, 3.0F},
-    {1.0F, 1.0F, 1.0F}, 2, {"noise"}, {{"noise", "NOISE"}}, {"z", "z-trans"}, {2, 2}, {8, 16, 32},
-    patch_sizes, {0, 0, 0}, {}, "xyzi", false, "partial", {0, 0});
+    {1.0F, 1.0F, 1.0F}, 2, time_lag_point_features, {"noise"}, {{"noise", "NOISE"}},
+    {"z", "z-trans"}, {2, 2}, {8, 16, 32}, patch_sizes, {0, 0, 0}, {}, "xyzi", false, "partial",
+    {0, 0});
+}
+
+// Segmentation-only config over three levels with the given point layout and sweep count.
+PTv3Config makePointLayoutConfig(
+  const std::vector<std::string> & point_features, const std::int64_t num_past_frames)
+{
+  return PTv3Config(
+    true, false, "", 8, "map", num_past_frames, {1, 4, 8}, {8, 8},
+    {-1.0F, -1.0F, -1.0F, 3.0F, 3.0F, 3.0F}, {1.0F, 1.0F, 1.0F}, 2, point_features, {"noise"},
+    {{"noise", "NOISE"}}, {"z", "z-trans"}, {2, 2}, {8, 16, 32}, {4, 4, 4}, {0, 0, 0}, {}, "xyzi",
+    false, "partial", {0, 0});
+}
+
+TEST(PTv3ConfigTest, AcceptsSingleFrameAndTimeLagPointLayouts)
+{
+  EXPECT_EQ(makePointLayoutConfig({"x", "y", "z", "intensity"}, 0).num_point_feature_size_, 4);
+  EXPECT_EQ(makePointLayoutConfig(time_lag_point_features, 0).num_point_feature_size_, 5);
+  EXPECT_EQ(makePointLayoutConfig(time_lag_point_features, 1).num_point_feature_size_, 5);
+}
+
+TEST(PTv3ConfigTest, RejectsSweepsWithoutTimeLagAndUnknownPointLayouts)
+{
+  EXPECT_THROW(makePointLayoutConfig({"x", "y", "z", "intensity"}, 1), std::runtime_error);
+  EXPECT_THROW(makePointLayoutConfig({"x", "y", "z", "time_lag"}, 0), std::runtime_error);
+  EXPECT_THROW(makePointLayoutConfig({"x", "y", "z"}, 0), std::runtime_error);
 }
 
 TEST(PTv3ConfigTest, RejectsPatchSizesThatDoNotCoverEveryStage)
@@ -82,8 +110,9 @@ PTv3Config makeSegmentationConfig(
   std::vector<std::int64_t> palette(segmentation_class_names.size() * 3, 0);
   return PTv3Config(
     true, false, "", 8, "map", 1, {1, 4, 8}, {8, 8}, {-1.0F, -1.0F, -1.0F, 3.0F, 3.0F, 3.0F},
-    {1.0F, 1.0F, 1.0F}, 2, segmentation_class_names, segmentation_class_mapping, {"z", "z-trans"},
-    {2, 2}, {8, 16, 32}, {4, 4, 4}, palette, {}, "xyzi", false, "partial", {0, 0});
+    {1.0F, 1.0F, 1.0F}, 2, time_lag_point_features, segmentation_class_names,
+    segmentation_class_mapping, {"z", "z-trans"}, {2, 2}, {8, 16, 32}, {4, 4, 4}, palette, {},
+    "xyzi", false, "partial", {0, 0});
 }
 
 TEST(PTv3ConfigTest, AcceptsCompatibleDetectionGrid)
@@ -196,29 +225,40 @@ TEST(PTv3ConfigTest, IgnoresMappingEntriesForClassesTheModelDoesNotOutput)
     static_cast<std::uint8_t>(PointCloudClassification::CAR));
 }
 
-// [0.5, 16.5) with unit voxels emits coordinates 0..16; a depth sized for 16 cells would drop the
-// boundary coordinate's top Morton bit and merge its voxels with coordinate 0's.
-TEST(PTv3ConfigTest, SerializationDepthCoversUnalignedRangeBoundary)
+// Cells count from the lower range border, so [0.5, 16.5) holds 16 unit cells like [0, 16).
+TEST(PTv3ConfigTest, SerializationDepthCountsCellsFromTheLowerBorder)
 {
   const auto aligned = makeDetectionConfig();
   EXPECT_EQ(aligned.serialization_depth_, 4);
 
   const auto unaligned = makeDetectionConfig({0.5F, 0.5F, 0.5F, 16.5F, 16.5F, 4.5F});
-  EXPECT_EQ(unaligned.serialization_depth_, 5);
+  EXPECT_EQ(unaligned.grid_x_size_, 16);
+  EXPECT_EQ(unaligned.grid_z_size_, 4);
+  EXPECT_EQ(unaligned.serialization_depth_, 4);
 }
 
-// The same boundary coordinates count toward the per-stage voxel bound: 17 x 17 x 5 cells at
-// stage 0, ceil'd per stride-2 stage. A 16 x 16 x 4 bound would under-size the encoder stage
-// buffers and TensorRT profiles.
-TEST(PTv3ConfigTest, StageVoxelCapacityCoversUnalignedRangeBoundary)
+// A range whose height is no multiple of the voxel size from the origin still holds
+// round(extent / size) cells: 7.68 m of 0.12 m voxels from -2.3 m are 64 cells.
+TEST(PTv3ConfigTest, GridHoldsTheTrainingVoxelizerCells)
+{
+  const auto config = makeDetectionConfig(
+    {-122.88F, -122.88F, -2.3F, 122.88F, 122.88F, 5.38F}, {0.96F, 0.96F, 8.0F}, {10.0F, 20.0F},
+    {0.1F, 0.2F, 0.3F, 0.4F}, {0.1F, 0.2F}, {0.12F, 0.12F, 0.12F});
+  EXPECT_EQ(config.grid_x_size_, 2048);
+  EXPECT_EQ(config.grid_y_size_, 2048);
+  EXPECT_EQ(config.grid_z_size_, 64);
+}
+
+// The per-stage voxel bound follows the cells: 16 x 16 x 4 at stage 0, halved per stride-2 stage.
+TEST(PTv3ConfigTest, StageVoxelCapacityFollowsTheGridCells)
 {
   const auto config = makeDetectionConfig(
     {0.5F, 0.5F, 0.5F, 16.5F, 16.5F, 4.5F}, {8.0F, 8.0F, 4.0F}, {10.0F, 20.0F},
     {0.1F, 0.2F, 0.3F, 0.4F}, {0.1F, 0.2F}, {1.0F, 1.0F, 1.0F}, {1, 1024, 4096},
     {4096, 4096, 4096, 4096});
-  EXPECT_EQ(config.stage_voxel_capacity(0), 17 * 17 * 5);
-  EXPECT_EQ(config.stage_voxel_capacity(1), 9 * 9 * 3);
-  EXPECT_EQ(config.stage_voxel_capacity(4), 2 * 2 * 1);
+  EXPECT_EQ(config.stage_voxel_capacity(0), 16 * 16 * 4);
+  EXPECT_EQ(config.stage_voxel_capacity(1), 8 * 8 * 2);
+  EXPECT_EQ(config.stage_voxel_capacity(4), 1 * 1 * 1);
 }
 
 // 16 x 16 x 4 grid: cell counts 1024, 128, 16, 4, 1 per level.

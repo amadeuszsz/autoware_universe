@@ -31,9 +31,10 @@ namespace autoware::ptv3
 
 /// Densified network input cloud.
 ///
-/// `points` holds one `(x, y, z, intensity, time_lag)` row per point, the
+/// `points` holds one `(x, y, z, intensity[, time_lag])` row per point, the
 /// current frame first (`num_current_points` rows with zero time lag) followed
-/// by ego-motion-compensated sweeps. `current_msg` keeps the current-frame
+/// by ego-motion-compensated sweeps. The single frame layout has no time lag
+/// and no sweeps. `current_msg` keeps the current-frame
 /// message alive for output stages that need its original point layout.
 struct DensifiedCloud
 {

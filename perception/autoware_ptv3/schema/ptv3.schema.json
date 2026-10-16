@@ -312,7 +312,7 @@
         },
         "densification_num_past_frames": {
           "type": "integer",
-          "description": "Number of past lidar frames concatenated with the current frame as network input.",
+          "description": "Number of past lidar frames concatenated with the current frame as network input. Must be 0 for an encoder without the time_lag point feature.",
           "minimum": 0
         },
         "encoder": {

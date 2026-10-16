@@ -45,6 +45,8 @@ __device__ float normalizedIntensity(const CloudPointTypeXYZI & point)
   return point.intensity;
 }
 
+constexpr std::int64_t time_lag_feature{4};
+
 template <typename PointT>
 __global__ void generateSweepFeaturesKernel(
   const PointT * __restrict__ input_points, std::size_t points_size, float time_lag,
@@ -73,7 +75,7 @@ __global__ void generateSweepFeaturesKernel(
     output_point[1] = nanf("");
     output_point[2] = nanf("");
     output_point[3] = 0.f;
-    output_point[4] = time_lag;
+    output_point[time_lag_feature] = time_lag;
     return;
   }
   output_point[0] = transform.matrix[0] * x + transform.matrix[4] * y + transform.matrix[8] * z +
@@ -83,7 +85,10 @@ __global__ void generateSweepFeaturesKernel(
   output_point[2] = transform.matrix[2] * x + transform.matrix[6] * y + transform.matrix[10] * z +
                     transform.matrix[14];
   output_point[3] = normalizedIntensity(input_point);
-  output_point[4] = time_lag;
+  // A single frame layout carries no time lag, it never holds sweeps
+  if (num_features > time_lag_feature) {
+    output_point[time_lag_feature] = time_lag;
+  }
 }
 
 }  // namespace

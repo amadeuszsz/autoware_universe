@@ -156,8 +156,8 @@ protected:
   CudaUniquePtr<std::int64_t[]> inverse_map_d_{nullptr};            // only for partial and full
   CudaUniquePtr<std::int64_t[]> reconstructed_labels_d_{nullptr};   // only for partial and full
   CudaUniquePtr<float[]> reconstructed_probs_d_{nullptr};           // only for partial and full
-  // Encoder inputs: padded voxel points [num_voxels, max_points_per_voxel, 5], their valid point
-  // counts, grid coordinates and serialized codes.
+  // Encoder inputs: padded voxel points [num_voxels, max_points_per_voxel, num_point_feature_size],
+  // their valid point counts, grid coordinates and serialized codes.
   CudaUniquePtr<float[]> voxels_d_{nullptr};
   CudaUniquePtr<std::int32_t[]> num_points_per_voxel_d_{nullptr};
   CudaUniquePtr<std::int32_t[]> grid_coord_d_{nullptr};

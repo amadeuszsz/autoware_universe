@@ -77,6 +77,8 @@ PTv3Node::PTv3Node(const rclcpp::NodeOptions & options) : Node("ptv3", options)
     to_float_vector(this->declare_parameter<std::vector<double>>("encoder.voxel_size", descriptor));
   const auto max_points_per_voxel =
     this->declare_parameter<std::int64_t>("encoder.max_points_per_voxel", descriptor);
+  const auto point_features =
+    this->declare_parameter<std::vector<std::string>>("encoder.point_features", descriptor);
   const auto serialization_orders =
     this->declare_parameter<std::vector<std::string>>("encoder.serialization_orders", descriptor);
   const auto pooling_strides =
@@ -213,7 +215,7 @@ PTv3Node::PTv3Node(const rclcpp::NodeOptions & options) : Node("ptv3", options)
   PTv3Config config(
     use_seg3d_head, use_det3d_head, plugins_path, cloud_capacity, densification_world_frame_id,
     densification_num_past_frames, voxels_num, pooled_voxels_num_max, point_cloud_range, voxel_size,
-    max_points_per_voxel, segmentation_class_names, segmentation_class_mapping,
+    max_points_per_voxel, point_features, segmentation_class_names, segmentation_class_mapping,
     serialization_orders, pooling_strides, enc_channels, patch_sizes, palette, filter_classes,
     filter_output_format, filter_apply_to_segmentation, source_reconstruction, dec_depths,
     detection_class_names_, bbox_voxel_size, distance_bin_upper_limits, detection_score_thresholds,

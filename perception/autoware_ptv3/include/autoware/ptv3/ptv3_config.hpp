@@ -47,7 +47,7 @@ public:
     const std::int64_t densification_num_past_frames, const std::vector<std::int64_t> & voxels_num,
     const std::vector<std::int64_t> & pooled_voxels_num_max,
     const std::vector<float> & point_cloud_range, const std::vector<float> & voxel_size,
-    const std::int64_t max_points_per_voxel,
+    const std::int64_t max_points_per_voxel, const std::vector<std::string> & point_features,
     const std::vector<std::string> & segmentation_class_names = {},
     const std::unordered_map<std::string, std::string> & segmentation_class_mapping = {},
     const std::vector<std::string> & serialization_orders = {},
@@ -111,14 +111,13 @@ public:
       throw std::runtime_error("max_points_per_voxel must be positive.");
     }
     max_points_per_voxel_ = max_points_per_voxel;
+    num_point_feature_size_ =
+      validate_point_features(point_features, densification_num_past_frames_);
 
-    // Cells the device grid mapping (see gridCoord) can emit per axis - one more than
-    // round(extent / size) when a range border is not voxel-aligned. The largest coordinate comes
-    // from the largest float below max_range: the crop is strict and float division is monotonic.
+    // Cells per axis of the training voxelizer grid: cells count from the lower range border and
+    // the range holds round(extent / size) of them, the crop drops the rows past the last one.
     const auto grid_cells = [](const float min_range, const float max_range, const float size) {
-      const float min_coord = std::floor(min_range / size);
-      const float max_coord = std::floor(std::nextafter(max_range, min_range) / size);
-      return static_cast<std::int64_t>(max_coord - min_coord) + 1;
+      return static_cast<std::int64_t>(std::lround((max_range - min_range) / size));
     };
     grid_x_size_ = grid_cells(min_x_range_, max_x_range_, voxel_x_size_);
     grid_y_size_ = grid_cells(min_y_range_, max_y_range_, voxel_y_size_);
@@ -362,6 +361,25 @@ public:
     return colors;
   }
 
+  // Point layouts the encoder reads: a single frame, or frames told apart by their time lag.
+  static std::int64_t validate_point_features(
+    const std::vector<std::string> & point_features, const std::int64_t num_past_frames)
+  {
+    const std::vector<std::string> single_frame{"x", "y", "z", "intensity"};
+    const std::vector<std::string> multi_frame{"x", "y", "z", "intensity", "time_lag"};
+    if (point_features != single_frame && point_features != multi_frame) {
+      throw std::runtime_error(
+        "point_features must be ['x', 'y', 'z', 'intensity'] or ['x', 'y', 'z', 'intensity', "
+        "'time_lag'].");
+    }
+    if (point_features == single_frame && num_past_frames > 0) {
+      throw std::runtime_error(
+        "densification_num_past_frames must be 0, the encoder reads a single frame without the "
+        "time_lag point feature.");
+    }
+    return static_cast<std::int64_t>(point_features.size());
+  }
+
   static std::vector<std::string> validate_serialization_orders(
     const std::vector<std::string> & serialization_orders)
   {
@@ -547,8 +565,8 @@ public:
   std::int64_t densified_cloud_capacity_{};  // capacity of the multi-frame network input
   std::int64_t min_num_voxels_{};
   std::int64_t max_num_voxels_{};
-  std::int64_t max_points_per_voxel_{};  // padded voxel slots, matches the training voxelizer
-  const std::int64_t num_point_feature_size_{5};  // x, y, z, intensity, time_lag
+  std::int64_t max_points_per_voxel_{};    // padded voxel slots, matches the training voxelizer
+  std::int64_t num_point_feature_size_{};  // x, y, z, intensity and, with sweeps, time_lag
 
   // Densification parameters
   std::string densification_world_frame_id_;

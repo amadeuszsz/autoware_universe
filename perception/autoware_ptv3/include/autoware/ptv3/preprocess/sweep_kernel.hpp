@@ -34,8 +34,9 @@ struct SweepTransform
 
 /// Ego-motion-compensate one cached lidar frame and write its network features.
 ///
-/// Every input point produces one `(x, y, z, intensity, time_lag)` row of
-/// `num_features` floats in `output_points`. The xyz coordinates are transformed
+/// Every input point produces one `(x, y, z, intensity[, time_lag])` row of
+/// `num_features` floats in `output_points`, the time lag only in the multi-frame
+/// layout of 5 features. The xyz coordinates are transformed
 /// by `transform` (past lidar frame -> current lidar frame; identity for the
 /// current frame). Intensity keeps the format-specific
 /// normalization used in training (`/255` for the 8-bit intensity formats, raw

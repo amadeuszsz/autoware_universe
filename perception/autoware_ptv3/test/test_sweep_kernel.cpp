@@ -157,6 +157,40 @@ TEST_F(SweepKernelTest, PoisonsEgoGhostsOfASweepThatCarriesAZeroLag)
   EXPECT_TRUE(std::isnan(output[2]));
 }
 
+// The single frame layout holds four features per point and no time lag: the rows stay packed and
+// nothing is written past them.
+TEST_F(SweepKernelTest, WritesTheSingleFrameLayoutWithoutTimeLag)
+{
+  constexpr std::size_t num_features = 4;
+  const std::vector<CloudPointTypeXYZI> points{
+    {1.0F, 0.0F, 0.0F, 10.0F},
+    {0.0F, 2.0F, 0.0F, 20.0F},
+  };
+  auto points_d = makeDeviceBuffer<CloudPointTypeXYZI>(points.size());
+  copyToDevice(points_d.get(), points);
+  constexpr float sentinel = 42.0F;
+  auto output_d = makeDeviceBuffer<float>(points.size() * num_features + 1);
+  copyToDevice(output_d.get(), std::vector<float>(points.size() * num_features + 1, sentinel));
+
+  SweepTransform transform{};
+  std::copy(kTranslationTransform.begin(), kTranslationTransform.end(), transform.matrix);
+  generateSweepFeaturesLaunch(
+    points_d.get(), CloudFormat::XYZI, points.size(), 0.0F, true, 1.0F, transform, num_features,
+    output_d.get(), kThreadsPerBlock, stream_);
+  ASSERT_EQ(cudaStreamSynchronize(stream_), cudaSuccess);
+
+  const auto output = copyToHost(output_d.get(), points.size() * num_features + 1);
+  const std::vector<float> expected{
+    2.0F,     2.0F, 3.0F, 10.0F,  //
+    1.0F,     4.0F, 3.0F, 20.0F,  //
+    sentinel,
+  };
+  ASSERT_EQ(output.size(), expected.size());
+  for (std::size_t i = 0; i < expected.size(); ++i) {
+    EXPECT_FLOAT_EQ(output[i], expected[i]) << "at index " << i;
+  }
+}
+
 TEST_F(SweepKernelTest, SkipsEmptyFrames)
 {
   generateSweepFeaturesLaunch(
